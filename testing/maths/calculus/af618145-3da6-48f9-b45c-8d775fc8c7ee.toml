@@ -1,0 +1,15 @@
+history = []
+
+[front]
+text = "anudda calc"
+
+[back]
+text = "hey"
+
+[meta]
+id = "af618145-3da6-48f9-b45c-8d775fc8c7ee"
+dependencies = []
+dependents = []
+suspended = false
+finished = true
+tags = []

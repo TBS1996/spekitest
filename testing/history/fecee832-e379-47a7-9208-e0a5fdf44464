@@ -1,0 +1,15 @@
+history = []
+
+[front]
+text = "howdy fella"
+
+[back]
+text = "nice meetin ya"
+
+[meta]
+id = "fecee832-e379-47a7-9208-e0a5fdf44464"
+dependencies = []
+dependents = []
+suspended = false
+finished = true
+tags = []

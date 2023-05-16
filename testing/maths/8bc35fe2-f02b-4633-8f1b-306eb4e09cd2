@@ -1,0 +1,15 @@
+history = []
+
+[front]
+text = "math q"
+
+[back]
+text = "math a"
+
+[meta]
+id = "8bc35fe2-f02b-4633-8f1b-306eb4e09cd2"
+dependencies = []
+dependents = []
+suspended = false
+finished = true
+tags = []

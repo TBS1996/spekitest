@@ -1,0 +1,15 @@
+history = []
+
+[front]
+text = "calc q"
+
+[back]
+text = "calc a"
+
+[meta]
+id = "491f8b92-c943-4c4b-b7bf-f7d483208eb0"
+dependencies = []
+dependents = []
+suspended = false
+finished = true
+tags = []
