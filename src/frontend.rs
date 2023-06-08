@@ -96,7 +96,7 @@ pub fn add_cards(conn: &Conn, category: Category) {
     }
 }
 
-pub fn review_cards(conn: &Conn, cards: Vec<Card>, category: &Category) {
+pub fn review_cards(_conn: &Conn, cards: Vec<Card>, category: &Category) {
     let mut grade_given = String::new();
     let cardqty = cards.len();
     for (index, card) in cards.into_iter().enumerate() {

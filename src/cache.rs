@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection, Result, NO_PARAMS};
 
-use std::path::{Path, PathBuf};
+
 
 use crate::card::Card;
 use crate::common::{current_time, Category};
@@ -18,8 +18,8 @@ fn sync_my_shit(conn: &Conn) {
     let categories = Category::load_all().unwrap();
 
     for category in &categories {
-        let category_path = category.as_path();
-        let cards = get_last_modified_map_from_category(conn, category);
+        let _category_path = category.as_path();
+        let _cards = get_last_modified_map_from_category(conn, category);
     }
 }
 
@@ -96,8 +96,8 @@ pub fn delete_the_card_cache(conn: &Connection, id: Id) {
 pub fn index_cards(conn: &Conn) {
     let dir = &get_cards_path();
 
-    Card::process_cards(dir, &mut |card: Card, path: &Category| {
-        let conn = conn;
+    Card::process_cards(dir, &mut |_card: Card, _path: &Category| {
+        let _conn = conn;
         //index_strength(conn, &card);
         //index_card(conn, &card, path);
         Ok(())
@@ -106,7 +106,7 @@ pub fn index_cards(conn: &Conn) {
 }
 
 pub fn cache_card_from_id(conn: &Conn, id: Id) {
-    let card = Card::load_from_id(id, conn).unwrap();
+    let _card = Card::load_from_id(id, conn).unwrap();
 }
 
 pub fn cache_card(conn: &Conn, card: &Card, category: &Category) {

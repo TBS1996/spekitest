@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use uuid::Uuid;
 
-use crate::card::Card;
+
 use crate::common::Category;
 
 mod cache;

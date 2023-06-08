@@ -1,18 +1,18 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{PathBuf};
 use std::time::Duration;
 
 use uuid::Uuid;
 
-use crate::cache::get_cached_path_from_db;
+
 use crate::card::Card;
 use crate::common::Category;
 use crate::frontend;
 use crate::{Conn, Id};
 
 pub fn get_last_modified_map_from_category(
-    conn: &Conn,
-    category: &Category,
+    _conn: &Conn,
+    _category: &Category,
 ) -> HashMap<String, Duration> {
     todo!()
     /*
