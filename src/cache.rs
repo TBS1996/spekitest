@@ -1,13 +1,39 @@
 use rusqlite::{params, Connection, Result, NO_PARAMS};
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::card::Card;
 use crate::common::{current_time, Category};
-use crate::folders::search_for_id;
-use crate::{Conn, Id, PATH};
+use crate::folders::{get_category_from_id_from_fs, get_last_modified_map_from_category};
+use crate::{get_cards_path, Conn, Id};
+
+pub struct CardMetaData {
+    file_name: String,
+    category: Category,
+    last_modified: u64,
+    file_size: u64,
+}
+
+fn sync_my_shit(conn: &Conn) {
+    let categories = Category::load_all().unwrap();
+
+    for category in &categories {
+        let category_path = category.as_path();
+        let cards = get_last_modified_map_from_category(conn, category);
+    }
+}
 
 /*
+
+
+remember: SPOT! :D
+    sync plan:
+
+    iterate over all the folders.
+    for each folder, grab the full category name, e.g. "math/calculus"
+    make a hashmap on each folder, from the cache, where the key is all the names and the value is the corresponding last_modified date.
+
+
 
 Cache plan:
 
@@ -41,7 +67,7 @@ pub fn get_cached_path_from_db(id: Id, conn: &Conn) -> Option<Category> {
         return Some(category);
     }
 
-    if let Some(category) = search_for_id(id) {
+    if let Some(category) = get_category_from_id_from_fs(id) {
         update_category(id, &category, conn);
         return Some(category);
     }
@@ -68,34 +94,32 @@ pub fn delete_the_card_cache(conn: &Connection, id: Id) {
 }
 
 pub fn index_cards(conn: &Conn) {
-    let dir = Path::new(PATH);
+    let dir = &get_cards_path();
 
     Card::process_cards(dir, &mut |card: Card, path: &Category| {
         let conn = conn;
-        index_strength(conn, &card);
-        index_card(conn, &card, path);
+        //index_strength(conn, &card);
+        //index_card(conn, &card, path);
         Ok(())
     })
     .unwrap();
 }
 
-pub fn cache_card(conn: &Conn, card: &Card) {
-    let category = search_for_id(card.meta.id).unwrap();
-    index_card(conn, card, &category);
-    if !card.history.is_empty() {
-        index_strength(conn, card);
-    }
+pub fn cache_card_from_id(conn: &Conn, id: Id) {
+    let card = Card::load_from_id(id, conn).unwrap();
 }
 
-pub fn index_card(conn: &Conn, card: &Card, category: &Category) {
+pub fn cache_card(conn: &Conn, card: &Card, category: &Category) {
     let id = card.meta.id.to_string();
     let front = card.front.text.to_owned();
     let back = card.back.text.to_owned();
     let category = category.joined();
+    let strength = card.calculate_strength();
+    let last_calc = current_time().as_secs() as i64;
 
     conn.execute(
-        "INSERT OR REPLACE INTO cards (id, front, back, category) VALUES (?1, ?2, ?3, ?4)",
-        params![id, front, back, category],
+        "INSERT OR REPLACE INTO cards (id, front, back, category, strength, last_calc) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![id, front, back, category, strength, last_calc],
     )
     .unwrap();
 }
@@ -110,18 +134,6 @@ fn update_category(id: Id, category: &Category, conn: &Conn) {
     .unwrap();
 }
 
-pub fn index_strength(conn: &Conn, card: &Card) {
-    let id = card.meta.id.to_string();
-    let strength = card.calculate_strength();
-    let last_calc = current_time().as_secs() as i64;
-
-    conn.execute(
-        "INSERT OR REPLACE INTO strength (id, strength, last_calc) VALUES (?1, ?2, ?3)",
-        params![id, strength, last_calc],
-    )
-    .unwrap();
-}
-
 pub fn init() -> Result<Conn> {
     let conn = Connection::open("cache.db")?;
 
@@ -130,17 +142,10 @@ pub fn init() -> Result<Conn> {
             id TEXT PRIMARY KEY,
             front TEXT,
             back TEXT,
-            category TEXT NOT NULL
-        )",
-        NO_PARAMS,
-    )?;
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS strength (
-            id TEXT PRIMARY KEY REFERENCES cards(id),
+            category TEXT NOT NULL,
             strength FLOAT NOT NULL,
-            last_calc INTEGER NOT NULL
-            
+            last_calc INTEGER NOT NULL,
+            last_modified INTEGER NOT NULL
         )",
         NO_PARAMS,
     )?;

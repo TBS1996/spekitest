@@ -2,6 +2,7 @@ use folders::*;
 use rusqlite::Result;
 
 use std::io::{self};
+use std::path::PathBuf;
 
 use uuid::Uuid;
 
@@ -16,71 +17,120 @@ mod frontend;
 
 type Conn = rusqlite::Connection;
 
-#[cfg(test)]
-pub const PATH: &str = "./testing/";
+const GIT_REMOTE: &str = "git@github.com:TBS1996/spekiremote.git";
+
+pub fn get_cards_path() -> PathBuf {
+    GET_SHARE_PATH().join("cards")
+}
+
 #[cfg(not(test))]
-pub const PATH: &str = "./cards/";
+pub fn GET_SHARE_PATH() -> PathBuf {
+    let home = dirs::home_dir().unwrap();
+    home.join(".local/share/speki/")
+}
+
+#[cfg(test)]
+pub fn GET_SHARE_PATH() -> PathBuf {
+    let home = dirs::home_dir().unwrap();
+    home.join("./")
+}
 
 type Id = Uuid;
 
+/*
+
+mvp:
+
+no categories
+
+just, you run the program, and choose between adding cards or reviewing cards
+
+if you click review cards it'll first calculate all the strengths for each card, and return a list of cards with strength below 0.9,
+then you'll start reviewing those :D
+
+
+
+ */
+
+use std::process::Command;
+
+fn git_save() {
+    Command::new("git").args(["add", "."]).output().unwrap();
+    Command::new("git")
+        .args(["commit", "-m", "save"])
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["push", "-u", "origin", "main"])
+        .output()
+        .unwrap();
+}
+
+fn git_pull() {
+    Command::new("git").args(["pull"]).output().unwrap();
+}
+
+fn git_stuff() {
+    std::env::set_current_dir(GET_SHARE_PATH()).unwrap();
+
+    // Initiate git
+    Command::new("git").arg("init").output().unwrap();
+
+    // Check if the remote repository is already set
+    let remote_check_output = Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .output()
+        .unwrap();
+
+    if remote_check_output.status.success() {
+        git_pull();
+    } else {
+        // Set the remote repository
+        Command::new("git")
+            .args(["remote", "add", "origin", GIT_REMOTE])
+            .output()
+            .unwrap();
+    }
+    git_save();
+}
+
 fn main() -> Result<()> {
     let conn = cache::init()?;
+    std::fs::create_dir_all(get_cards_path()).unwrap();
+
+    git_stuff();
 
     let menu_stuff = "Welcome! :D
-choose action followed by directory .
 
-actions: 
-1. Add new card
-2. Add new category
-3. Review cards
-...
-
-5. index cards
-6. view cards
-
-actions:
-
+1. Add new cards
+2. Review cards
 ";
-
-    let mut input = String::new();
 
     loop {
         println!("{}", menu_stuff);
-        let mut categories = Category::load_all().unwrap();
-        categories.insert(0, Category(vec!["default".into()]));
-        for (index, category) in categories.iter().enumerate() {
-            println!("{}, {}", index, category.joined());
-        }
-        categories[0].0.clear();
-        input.clear();
+
+        let mut input = String::new();
         io::stdin().read_line(&mut input).unwrap();
         input.pop();
 
-        let (action, dir) = input.split_once(' ').unwrap_or_else(|| ("0", &input));
-        let dir = match dir.parse::<usize>() {
-            Ok(dir) => {
-                if dir >= categories.len() {
-                    0
-                } else {
-                    dir
-                }
+        match input.as_str() {
+            "1" => frontend::add_cards(&conn, Category::default()),
+            "2" => review_card_in_directory(&conn, &Category::default()),
+            "s" => {
+                println!("saving progress!");
+                git_save();
             }
-            Err(_) => 0,
+            "q" => {
+                git_save();
+                return Ok(());
+            }
+            _ => {
+                println!("Invalid input!");
+                println!();
+                println!();
+                continue;
+            }
         };
-
-        let category = &categories[dir];
-
-        match action {
-            "1" => frontend::add_cards(&conn, category.to_owned()),
-            "2" => {
-                let _ = create_category(category);
-            }
-            "3" => review_card_in_directory(&conn, category),
-            "4" => return Ok(()),
-            "5" => cache::index_cards(&conn),
-            "6" => frontend::view_cards(&conn, category),
-            _ => println!("Invalid input"),
-        }
     }
 }
 

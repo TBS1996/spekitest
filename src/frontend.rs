@@ -4,7 +4,7 @@ use crate::card::{Card, Side};
 use crate::common::Category;
 use crate::{folders, Conn, Id};
 
-fn print_cards(conn: &Conn, cards: &Vec<Id>) {
+fn print_cards(conn: &Conn, cards: &[Id]) {
     println!(
         "actions:
 d: delete
@@ -23,7 +23,7 @@ to edit or delete, press first the number of the card then the action letter.
 }
 
 pub fn view_cards(conn: &Conn, category: &Category) {
-    let cards = folders::get_cards_from_category(category);
+    let cards = folders::get_card_ids_from_category(category);
     print_cards(conn, &cards);
 
     let mut input = String::new();
@@ -42,7 +42,7 @@ pub fn view_cards(conn: &Conn, category: &Category) {
                     match action {
                         "d" => {
                             Card::delete_card(cards[card], conn);
-                            let cards = folders::get_cards_from_category(category);
+                            let cards = folders::get_card_ids_from_category(category);
                             print_cards(conn, &cards);
                         }
                         "e" => Card::edit_card(cards[card], conn),
@@ -59,8 +59,8 @@ pub fn view_cards(conn: &Conn, category: &Category) {
 
 pub fn add_cards(conn: &Conn, category: Category) {
     let mut input = String::new();
-    let mut front = String::new();
-    let mut back = String::new();
+    let mut front;
+    let mut back;
 
     println!("Adding cards to: {}", category.joined());
 
@@ -96,17 +96,15 @@ pub fn add_cards(conn: &Conn, category: Category) {
     }
 }
 
-pub fn review_cards(conn: &Conn, cards: Vec<Id>, category: &Category) {
+pub fn review_cards(conn: &Conn, cards: Vec<Card>, category: &Category) {
     let mut grade_given = String::new();
     let cardqty = cards.len();
-    for (index, id) in cards.into_iter().enumerate() {
-        let card = Card::load_from_id(id, conn).unwrap();
+    for (index, card) in cards.into_iter().enumerate() {
         let strength = card.calculate_strength();
         if card.calculate_strength() > 0.9 {
             println!(
                 "Skipping: {}, reason: strength too high: {}",
-                Card::get_card_question(id, conn),
-                strength
+                card.front.text, strength
             );
             continue;
         }

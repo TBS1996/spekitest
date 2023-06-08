@@ -9,10 +9,12 @@ use std::process::Command;
 use std::time::Duration;
 use uuid::Uuid;
 
-use crate::folders::search_for_id;
+use crate::cache::CardMetaData;
+use crate::folders::get_category_from_id_from_fs;
 use crate::{cache, Conn};
 use crate::{common::current_time, Id};
 
+/*
 pub struct VerifiedCardPath(PathBuf);
 
 impl VerifiedCardPath {
@@ -23,6 +25,11 @@ impl VerifiedCardPath {
         None
     }
 }
+*/
+
+pub struct CardState {}
+
+pub struct StatefulCard(Card, CardMetaData);
 
 #[derive(Deserialize, Serialize, Debug, Default, Clone)]
 pub struct Card {
@@ -36,8 +43,9 @@ pub struct Card {
 // public
 impl Card {
     pub fn delete_card(id: Id, conn: &Conn) {
-        let path = search_for_id(id).unwrap().as_path_with_id(id);
-        let card = Card::load_from_id(id, conn).unwrap();
+        let path = get_category_from_id_from_fs(id)
+            .unwrap()
+            .as_path_with_id(id);
         std::fs::remove_file(path).unwrap();
         cache::delete_the_card_cache(conn, id);
     }
@@ -45,21 +53,26 @@ impl Card {
     pub fn load_from_id(id: Id, conn: &Conn) -> Option<Self> {
         let category = Self::get_category_from_id(id, conn)?;
         let card = Self::parse_toml_to_card(&category.as_path_with_id(id)).ok()?;
-        cache::index_card(conn, &card, &category);
+        //cache::cache_card_from_id(conn, id);
         Some(card)
+    }
+
+    pub fn get_card_path_from_id(conn: &Conn, id: Id) -> PathBuf {
+        let category = Self::get_category_from_id(id, conn).unwrap();
+        category.as_path_with_id(id)
     }
 
     pub fn get_card_question(id: Id, conn: &Conn) -> String {
         Self::load_from_id(id, conn).unwrap().front.text
     }
 
-    fn get_category_from_id(id: Id, conn: &Conn) -> Option<Category> {
+    pub fn get_category_from_id(id: Id, conn: &Conn) -> Option<Category> {
         if let Some(path) = cache::get_cached_path_from_db(id, conn) {
             if path.as_path_with_id(id).exists() {
                 return Some(path);
             }
         }
-        search_for_id(id)
+        get_category_from_id_from_fs(id)
     }
 
     // Will either update the card if it exists, or create a new one
@@ -69,7 +82,7 @@ impl Card {
     */
     pub fn save_card(self, incoming_category: Option<Category>, conn: &Conn) {
         let incoming_category = incoming_category
-            .or(search_for_id(self.meta.id))
+            .or_else(|| get_category_from_id_from_fs(self.meta.id))
             .unwrap_or(Category(vec![]));
 
         let id = self.meta.id;
@@ -81,7 +94,7 @@ impl Card {
             if category != incoming_category {
                 Self::move_card(id, &incoming_category, conn).unwrap();
             }
-            cache::cache_card(conn, &self);
+            cache::cache_card(conn, &self, &category);
         }
         // this implies it's a create operation, since we didn't find the path here.
         else {
@@ -91,19 +104,25 @@ impl Card {
 
     pub fn save_card_to_toml(self, category: &Category) -> Result<PathBuf, toml::ser::Error> {
         let toml = toml::to_string(&self).unwrap();
-        let path = category.as_path_with_id(self.meta.id);
+        let path = category
+            .as_path()
+            .join(self.front.text)
+            .with_extension("toml");
+
         std::fs::write(&path, toml).expect("Unable to write file");
         Ok(path)
     }
 
     /// Moves the card and updates the cache.
     pub fn move_card(id: Id, category: &Category, conn: &Conn) -> io::Result<()> {
-        let old_path = search_for_id(id).unwrap().as_path_with_id(id);
+        let old_path = get_category_from_id_from_fs(id)
+            .unwrap()
+            .as_path_with_id(id);
         let new_path = category.as_path_with_id(id);
 
         fs::rename(old_path, new_path)?;
         let card = Self::load_from_id(id, conn).unwrap();
-        cache::index_card(conn, &card, category);
+        cache::cache_card(conn, &card, category);
         Ok(())
     }
 
@@ -132,9 +151,11 @@ impl Card {
 
     pub fn edit_card(id: Id, conn: &Conn) {
         let card = Self::load_from_id(id, conn).unwrap();
-        let path = search_for_id(id).unwrap().as_path_with_id(id);
-        Command::new("nvim").arg(path).status().unwrap();
-        cache::cache_card(conn, &card);
+        let path = get_category_from_id_from_fs(id)
+            .unwrap()
+            .as_path_with_id(id);
+        Command::new("nvim").arg(&path).status().unwrap();
+        cache::cache_card(conn, &card, &Category::from_card_path(&path));
     }
 
     pub fn create_new(front: &str, back: &str, category: &Category) -> Result<Id> {
@@ -152,7 +173,7 @@ impl Card {
 
         let id = card.meta.id;
 
-        card.save_card_to_toml(&category).unwrap();
+        card.save_card_to_toml(category).unwrap();
         Ok(id)
     }
 
@@ -177,7 +198,7 @@ impl Card {
 
 // private
 impl Card {
-    fn parse_toml_to_card(file_path: &Path) -> Result<Card, toml::de::Error> {
+    pub fn parse_toml_to_card(file_path: &Path) -> Result<Card, toml::de::Error> {
         let content = read_to_string(file_path).expect("Could not read the TOML file");
         let mut card: Card = toml::from_str(&content)?;
         card.history.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
@@ -186,10 +207,9 @@ impl Card {
 
     /// Search through the folders for the card, if it finds it, update the cache.
     fn find_and_index(id: Id, conn: &Conn) -> Option<Self> {
-        if let Some(path) = search_for_id(id) {
+        if let Some(path) = get_category_from_id_from_fs(id) {
             let card = Self::parse_toml_to_card(path.as_path().as_path()).ok()?;
-            cache::index_card(conn, &card, &path);
-            cache::index_strength(conn, &card);
+            cache::cache_card_from_id(conn, id);
             return Some(card);
         }
         None
@@ -219,7 +239,7 @@ impl Card {
 
         let lapse_duration = current_time - reviews.last().unwrap().timestamp;
         let lapse_days = lapse_duration.as_secs() as f64 / 86400.0;
-        2.0f64.powf(-lapse_days / interval as f64).into()
+        2.0f64.powf(-lapse_days / interval)
     }
 }
 
