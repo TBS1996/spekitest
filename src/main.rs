@@ -1,4 +1,5 @@
 use folders::*;
+use frontend::main_loop;
 use rusqlite::Result;
 
 use std::io::{self};
@@ -69,7 +70,7 @@ fn git_pull() {
     Command::new("git").args(["pull"]).output().unwrap();
 }
 
-fn git_stuff() {
+pub fn git_stuff() {
     std::env::set_current_dir(GET_SHARE_PATH()).unwrap();
 
     // Initiate git
@@ -98,41 +99,8 @@ fn main() -> Result<()> {
     std::fs::create_dir_all(get_cards_path()).unwrap();
 
     git_stuff();
-
-    let menu_stuff = "Welcome! :D
-
-1. Add new cards
-2. Review cards
-3. Add unfinished cards
-";
-
-    loop {
-        println!("{}", menu_stuff);
-
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap();
-        input.pop();
-
-        match input.as_str() {
-            "1" => frontend::add_cards(&conn, Category::default(), true),
-            "2" => review_card_in_directory(&conn, &Category::default()),
-            "3" => frontend::add_cards(&conn, Category::default(), false),
-            "s" => {
-                println!("saving progress!");
-                git_save();
-            }
-            "q" => {
-                git_save();
-                return Ok(());
-            }
-            _ => {
-                println!("Invalid input!");
-                println!();
-                println!();
-                continue;
-            }
-        };
-    }
+    main_loop(&conn);
+    Ok(())
 }
 
 /*

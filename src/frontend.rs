@@ -1,8 +1,49 @@
 //! this will be about actually using the program like reviewing and all that
 
+use std::io;
+
 use crate::card::{Card, Side};
 use crate::common::Category;
-use crate::{folders, Conn, Id};
+use crate::folders::review_card_in_directory;
+use crate::{folders, git_save, Conn, Id};
+
+pub fn main_loop(conn: &Conn) {
+    let menu_stuff = "Welcome! :D
+
+1. Add new cards
+2. Review cards
+3. Add unfinished cards
+";
+
+    loop {
+        clear_screen();
+        println!("{}", menu_stuff);
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+        input.pop();
+
+        match input.as_str() {
+            "1" => add_cards(conn, Category::default(), true),
+            "2" => review_card_in_directory(conn, &Category::default()),
+            "3" => add_cards(&conn, Category::default(), false),
+            "s" => {
+                println!("saving progress!");
+                git_save();
+            }
+            "q" => {
+                git_save();
+                return;
+            }
+            _ => {
+                println!("Invalid input!");
+                println!();
+                println!();
+                continue;
+            }
+        };
+    }
+}
 
 fn print_cards(conn: &Conn, cards: &[Id]) {
     println!(
@@ -69,6 +110,7 @@ pub fn add_cards(conn: &Conn, category: Category, finished: bool) {
     }
 
     loop {
+        clear_screen();
         input.clear();
         println!("Front side");
         std::io::stdin().read_line(&mut input).unwrap();
@@ -104,10 +146,18 @@ pub fn add_cards(conn: &Conn, category: Category, finished: bool) {
     }
 }
 
+use console::Term;
+
+fn clear_screen() {
+    let term = Term::stdout();
+    term.clear_screen().unwrap();
+}
+
 pub fn review_cards(_conn: &Conn, cards: Vec<Card>, category: &Category) {
     let mut grade_given = String::new();
     let cardqty = cards.len();
     for (index, card) in cards.into_iter().enumerate() {
+        clear_screen();
         let strength = card.calculate_strength();
         if card.calculate_strength() > 0.9 {
             println!(
