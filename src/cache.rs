@@ -1,7 +1,5 @@
 use rusqlite::{params, Connection, Result, NO_PARAMS};
 
-
-
 use crate::card::Card;
 use crate::common::{current_time, Category};
 use crate::folders::{get_category_from_id_from_fs, get_last_modified_map_from_category};
