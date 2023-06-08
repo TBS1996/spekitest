@@ -42,6 +42,10 @@ pub struct Card {
 
 // public
 impl Card {
+    pub fn is_ready_for_review(&self) -> bool {
+        self.meta.finished && !self.meta.suspended
+    }
+
     pub fn delete_card(id: Id, conn: &Conn) {
         let path = get_category_from_id_from_fs(id)
             .unwrap()

@@ -1,9 +1,8 @@
 use std::collections::HashMap;
-use std::path::{PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use uuid::Uuid;
-
 
 use crate::card::Card;
 use crate::common::Category;
@@ -76,6 +75,12 @@ pub fn get_size_from_path(path: &PathBuf) -> u64 {
     std::fs::metadata(path).unwrap().len()
 }
 
+pub fn get_all_unfinished_cards() -> Vec<Card> {
+    get_all_cards()
+        .into_iter()
+        .filter(|card| card.meta.suspended)
+        .collect()
+}
 pub fn get_all_cards() -> Vec<Card> {
     let cats = Category::load_all().unwrap();
     let mut cards = vec![];
@@ -96,8 +101,18 @@ pub fn get_all_cards_ids() -> Vec<Id> {
     cards
 }
 
+pub fn review_unfinished_cards(conn: &Conn) {
+    let cards = get_all_unfinished_cards();
+
+    for card in cards.iter() {}
+}
+
 pub fn review_card_in_directory(conn: &Conn, category: &Category) {
     let cards = get_all_cards();
+    let cards = cards
+        .into_iter()
+        .filter(|card| card.is_ready_for_review())
+        .collect();
     frontend::review_cards(conn, cards, category);
 }
 

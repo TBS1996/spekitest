@@ -57,12 +57,16 @@ pub fn view_cards(conn: &Conn, category: &Category) {
     }
 }
 
-pub fn add_cards(conn: &Conn, category: Category) {
+pub fn add_cards(conn: &Conn, category: Category, finished: bool) {
     let mut input = String::new();
     let mut front;
     let mut back;
 
-    println!("Adding cards to: {}", category.joined());
+    if finished {
+        println!("Adding cards to: {}", category.joined());
+    } else {
+        println!("Adding unfinished cards to: {}", category.joined());
+    }
 
     loop {
         input.clear();
@@ -80,7 +84,7 @@ pub fn add_cards(conn: &Conn, category: Category) {
             return;
         }
         back = std::mem::take(&mut input);
-        let card = Card {
+        let mut card = Card {
             front: Side {
                 text: front,
                 ..Default::default()
@@ -91,6 +95,10 @@ pub fn add_cards(conn: &Conn, category: Category) {
             },
             ..Default::default()
         };
+
+        if !finished {
+            card.meta.finished = false;
+        }
 
         card.save_card(Some(category.clone()), conn);
     }

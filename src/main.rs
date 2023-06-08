@@ -6,7 +6,6 @@ use std::path::PathBuf;
 
 use uuid::Uuid;
 
-
 use crate::common::Category;
 
 mod cache;
@@ -104,6 +103,7 @@ fn main() -> Result<()> {
 
 1. Add new cards
 2. Review cards
+3. Add unfinished cards
 ";
 
     loop {
@@ -114,8 +114,9 @@ fn main() -> Result<()> {
         input.pop();
 
         match input.as_str() {
-            "1" => frontend::add_cards(&conn, Category::default()),
+            "1" => frontend::add_cards(&conn, Category::default(), true),
             "2" => review_card_in_directory(&conn, &Category::default()),
+            "3" => frontend::add_cards(&conn, Category::default(), false),
             "s" => {
                 println!("saving progress!");
                 git_save();
