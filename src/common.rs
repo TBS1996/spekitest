@@ -112,7 +112,6 @@ pub mod serde_duration_as_secs {
 
 #[cfg(test)]
 mod tests {
-    
 
     use super::*;
 

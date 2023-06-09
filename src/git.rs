@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use crate::GET_SHARE_PATH;
+use crate::get_share_path;
 
 pub fn git_save(has_remote: bool) {
     Command::new("git").args(["add", "."]).output().unwrap();
@@ -22,7 +22,7 @@ pub fn git_pull() {
 }
 
 pub fn git_stuff(git_remote: &Option<String>) {
-    std::env::set_current_dir(GET_SHARE_PATH()).unwrap();
+    std::env::set_current_dir(get_share_path()).unwrap();
 
     // Initiate git
     Command::new("git").arg("init").output().unwrap();

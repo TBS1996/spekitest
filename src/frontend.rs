@@ -1,6 +1,6 @@
 //! this will be about actually using the program like reviewing and all that
 
-use std::io;
+use std::io::stdout;
 
 use crate::card::{Card, Side};
 use crate::common::Category;
@@ -9,39 +9,28 @@ use crate::folders::review_card_in_directory;
 use crate::git::git_save;
 
 pub fn run(config: Config) {
-    let menu_stuff = "Welcome! :D
-
-1. Add new cards
-2. Review cards
-3. Add unfinished cards
-";
+    let menu_items = vec![
+        "Add new cards",
+        "Review cards",
+        "Add unfinished cards",
+        "Save progress",
+        "Quit",
+    ];
 
     loop {
-        clear_screen();
-        println!("{}", menu_stuff);
-
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap();
-        input.pop();
-
-        match input.as_str() {
-            "1" => add_cards(Category::default(), true),
-            "2" => review_card_in_directory(&Category::default()),
-            "3" => add_cards(Category::default(), false),
-            "s" => {
+        match draw_menu(&menu_items) {
+            0 => add_cards(Category::default(), true),
+            1 => review_card_in_directory(&Category::default()),
+            2 => add_cards(Category::default(), false),
+            3 => {
                 println!("saving progress!");
                 git_save(config.read_git_remote().is_some());
             }
-            "q" => {
+            4 => {
                 git_save(config.read_git_remote().is_some());
                 return;
             }
-            _ => {
-                println!("Invalid input!");
-                println!();
-                println!();
-                continue;
-            }
+            _ => {}
         };
     }
 }
@@ -111,7 +100,6 @@ pub fn add_cards(category: Category, finished: bool) {
     }
 
     loop {
-        clear_screen();
         input.clear();
         println!("Front side");
         std::io::stdin().read_line(&mut input).unwrap();
@@ -147,28 +135,10 @@ pub fn add_cards(category: Category, finished: bool) {
     }
 }
 
-use console::Term;
-
-fn clear_screen() {
-    let term = Term::stdout();
-    term.clear_screen().unwrap();
-}
-
 pub fn review_cards(cards: Vec<Card>, category: &Category) {
     let mut grade_given = String::new();
     let cardqty = cards.len();
     for (index, card) in cards.into_iter().enumerate() {
-        clear_screen();
-        let strength = card.calculate_strength();
-        println!("strength is{}", strength);
-        if card.calculate_strength() > 0.9 {
-            println!(
-                "Skipping: {}, reason: strength too high: {}",
-                card.front.text, strength
-            );
-            continue;
-        }
-
         println!("Review card");
         println!("{}", card.front.text);
         std::io::stdin().read_line(&mut String::new()).unwrap();
@@ -193,4 +163,72 @@ pub fn review_cards(cards: Vec<Card>, category: &Category) {
         }
     }
     println!("Nothing left to review :D");
+}
+
+use crossterm::{
+    cursor::{Hide, MoveTo, Show},
+    event::{read, Event, KeyCode},
+    execute,
+    style::{ResetColor, SetForegroundColor},
+    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
+};
+
+pub fn draw_message(message: &str) {
+    enable_raw_mode().unwrap();
+
+    let mut stdout = stdout();
+    execute!(stdout, Hide).unwrap();
+
+    execute!(stdout, Clear(ClearType::All)).unwrap();
+    println!("{message}");
+    execute!(stdout, ResetColor).unwrap();
+    read().unwrap();
+    execute!(stdout, Clear(ClearType::All)).unwrap();
+    disable_raw_mode().unwrap();
+}
+
+fn draw_menu(items: &[&str]) -> usize {
+    enable_raw_mode().unwrap();
+
+    let mut stdout = stdout();
+    execute!(stdout, Hide).unwrap();
+
+    let mut selected = 0;
+
+    loop {
+        execute!(stdout, Clear(ClearType::All)).unwrap();
+
+        for (index, item) in items.iter().enumerate() {
+            execute!(stdout, MoveTo(0, index as u16)).unwrap();
+
+            if index == selected {
+                execute!(stdout, SetForegroundColor(crossterm::style::Color::Blue)).unwrap();
+                println!("> {}", item);
+                execute!(stdout, ResetColor).unwrap();
+            } else {
+                println!("  {}", item);
+            }
+        }
+
+        // Await input from user
+        if let Event::Key(event) = read().unwrap() {
+            match event.code {
+                KeyCode::Up => {
+                    selected = selected.saturating_sub(1);
+                }
+                KeyCode::Down => {
+                    if selected < items.len() - 1 {
+                        selected += 1;
+                    }
+                }
+                KeyCode::Enter => {
+                    execute!(stdout, Clear(ClearType::All)).unwrap();
+                    execute!(stdout, Show, MoveTo(0, items.len() as u16 + 1)).unwrap();
+                    disable_raw_mode().unwrap();
+                    return selected;
+                }
+                _ => {}
+            }
+        }
+    }
 }

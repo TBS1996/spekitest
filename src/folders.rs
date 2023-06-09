@@ -7,27 +7,8 @@ use uuid::Uuid;
 use crate::card::Card;
 use crate::common::Category;
 use crate::frontend;
+use crate::frontend::draw_message;
 use crate::Id;
-
-pub fn get_last_modified_map_from_category(_category: &Category) -> HashMap<String, Duration> {
-    todo!()
-    /*
-    let mut stmt = conn.prepare("SELECT id, last_modified FROM cards").unwrap();
-    let rows: Option<Vec<(String, u64)>> = stmt
-        .query_map(rusqlite::NO_PARAMS, |row| {
-            Ok((row.get(0).unwrap(), row.get(1).unwrap()))
-        })
-        .unwrap();
-    let rows = rows.unwrap();
-
-    let mut map = HashMap::new();
-
-    for row in rows {
-        map.insert(row.0, Duration::from_secs(row.1));
-    }
-    map
-    */
-}
 
 pub fn get_cards_from_category(category: &Category) -> Vec<Card> {
     let directory = category.as_path();
@@ -108,10 +89,14 @@ pub fn review_unfinished_cards(conn: &Conn) {
 
 pub fn review_card_in_directory(category: &Category) {
     let cards = get_all_cards();
-    let cards = cards
+    let cards: Vec<Card> = cards
         .into_iter()
-        .filter(|card| card.is_ready_for_review())
+        .filter(|card| card.is_ready_for_review(Some(0.9)))
         .collect();
+    if cards.is_empty() {
+        draw_message("Nothing to review!");
+        return;
+    }
     frontend::review_cards(cards, category);
 }
 

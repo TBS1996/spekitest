@@ -49,8 +49,16 @@ pub struct Card {
 
 // public
 impl Card {
-    pub fn is_ready_for_review(&self) -> bool {
-        self.meta.finished && !self.meta.suspended
+    pub fn is_ready_for_review(&self, strength: Option<f64>) -> bool {
+        let x = self.meta.finished && !self.meta.suspended;
+        if !x {
+            return x;
+        };
+
+        match strength {
+            Some(strength) => self.calculate_strength() < strength,
+            None => true,
+        }
     }
 
     pub fn load_from_id(id: Id) -> Option<Self> {
@@ -136,7 +144,7 @@ impl Card {
         let new_path = category.as_path_with_id(id);
 
         fs::rename(old_path, new_path)?;
-        let card = Self::load_from_id(id).unwrap();
+        let _card = Self::load_from_id(id).unwrap();
         //   cache::cache_card(conn, &card, category);
         Ok(())
     }
@@ -165,7 +173,7 @@ impl Card {
     }
 
     pub fn edit_card(id: Id) {
-        let card = Self::load_from_id(id).unwrap();
+        let _card = Self::load_from_id(id).unwrap();
         let path = get_category_from_id_from_fs(id)
             .unwrap()
             .as_path_with_id(id);

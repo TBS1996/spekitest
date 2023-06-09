@@ -1,17 +1,12 @@
 use config::Config;
-use folders::*;
+
 use frontend::run;
 use git::git_stuff;
 
-use std::error::Error;
-use std::io::{self};
 use std::path::PathBuf;
 
 use uuid::Uuid;
 
-use crate::common::Category;
-
-//mod cache;
 mod card;
 mod common;
 mod config;
@@ -20,17 +15,17 @@ mod frontend;
 mod git;
 
 pub fn get_cards_path() -> PathBuf {
-    GET_SHARE_PATH().join("cards")
+    get_share_path().join("cards")
 }
 
 #[cfg(not(test))]
-pub fn GET_SHARE_PATH() -> PathBuf {
+pub fn get_share_path() -> PathBuf {
     let home = dirs::home_dir().unwrap();
     home.join(".local/share/speki/")
 }
 
 #[cfg(test)]
-pub fn GET_SHARE_PATH() -> PathBuf {
+pub fn get_share_path() -> PathBuf {
     let home = dirs::home_dir().unwrap();
     home.join("./")
 }

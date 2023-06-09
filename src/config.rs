@@ -1,12 +1,12 @@
 use std::{
     fs::File,
     io::{Read, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 use serde::{Deserialize, Serialize};
 
-use crate::GET_SHARE_PATH;
+use crate::get_share_path;
 
 #[derive(Debug, Serialize, Deserialize)]
 
@@ -18,27 +18,27 @@ pub struct Config {
 
 impl Config {
     fn config_path() -> PathBuf {
-        GET_SHARE_PATH().join("config.toml")
+        get_share_path().join("config.toml")
     }
 
     pub fn read_git_remote(&self) -> &Option<String> {
         &self.git_remote
     }
-    pub fn read_play_audio(&self) -> &Option<String> {
+    pub fn _read_play_audio(&self) -> &Option<String> {
         &self.git_remote
     }
-    pub fn read_show_images(&self) -> &Option<String> {
+    pub fn _read_show_images(&self) -> &Option<String> {
         &self.git_remote
     }
 
-    pub fn play_audio(&mut self, val: bool) {
+    pub fn _play_audio(&mut self, val: bool) {
         self.play_audio = val;
-        self.save();
+        self.save().unwrap();
     }
 
-    pub fn show_image(&mut self, val: bool) {
+    pub fn _show_image(&mut self, val: bool) {
         self.show_images = val;
-        self.save();
+        self.save().unwrap();
     }
 
     // Save the config to a file
