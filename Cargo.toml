@@ -2,6 +2,9 @@
 name = "spekinew"
 version = "0.1.0"
 edition = "2021"
+description = "new version of speki, more git-oriented"
+license = "GPL-2.0-only"
+
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 #toml = { version = "0.7.3", features = ["parse"] }
