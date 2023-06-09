@@ -3,6 +3,7 @@ use folders::*;
 use frontend::run;
 use git::git_stuff;
 
+use std::error::Error;
 use std::io::{self};
 use std::path::PathBuf;
 
