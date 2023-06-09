@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use config::Config;
 
 use frontend::run;

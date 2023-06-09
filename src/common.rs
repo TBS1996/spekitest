@@ -25,7 +25,7 @@ impl Category {
         Ok(folders)
     }
 
-    pub fn append(mut self, category: &str) -> Self {
+    pub fn _append(mut self, category: &str) -> Self {
         self.0.push(category.into());
         self
     }
@@ -59,7 +59,7 @@ impl Category {
         self.0.join("/")
     }
 
-    pub fn from_card_path(path: &Path) -> Self {
+    pub fn _from_card_path(path: &Path) -> Self {
         let root = get_cards_path();
         let path = path.strip_prefix(root).unwrap();
 

@@ -151,7 +151,7 @@ impl Card {
 
     // The closure takes a Card and returns a Result.
     // This allows it to handle errors that might occur during processing.
-    pub fn process_cards<F>(dir: &Path, func: &mut F) -> io::Result<()>
+    pub fn _process_cards<F>(dir: &Path, func: &mut F) -> io::Result<()>
     where
         F: FnMut(Card, &Category) -> io::Result<()>,
     {
@@ -161,10 +161,10 @@ impl Card {
                 let entry = entry?;
                 let path = entry.path();
                 if path.is_dir() {
-                    Self::process_cards(&path, func)?;
+                    Self::_process_cards(&path, func)?;
                 } else if path.extension() == Some(OsStr::new("toml")) {
                     let card = Self::parse_toml_to_card(&path).unwrap(); // Assuming parse_toml_to_card returns Result<Card, io::Error>
-                    let category = Category::from_card_path(&path);
+                    let category = Category::_from_card_path(&path);
                     func(card, &category)?;
                 }
             }
@@ -172,7 +172,7 @@ impl Card {
         Ok(())
     }
 
-    pub fn edit_card(id: Id) {
+    pub fn _edit_card(id: Id) {
         let _card = Self::load_from_id(id).unwrap();
         let path = get_category_from_id_from_fs(id)
             .unwrap()
@@ -181,7 +181,7 @@ impl Card {
         //  cache::cache_card(conn, &card, &Category::from_card_path(&path));
     }
 
-    pub fn create_new(front: &str, back: &str, category: &Category) -> Id {
+    pub fn _create_new(front: &str, back: &str, category: &Category) -> Id {
         let card = Card {
             front: Side {
                 text: front.into(),
@@ -229,7 +229,7 @@ impl Card {
     }
 
     /// Search through the folders for the card, if it finds it, update the cache.
-    fn find_and_index(id: Id) -> Option<Self> {
+    fn _find_and_index(id: Id) -> Option<Self> {
         if let Some(path) = get_category_from_id_from_fs(id) {
             let card = Self::parse_toml_to_card(path.as_path().as_path()).ok()?;
             //   cache::cache_card_from_id(conn, id);
@@ -318,7 +318,7 @@ pub enum Grade {
 }
 
 impl Grade {
-    pub fn get_factor(&self) -> f32 {
+    pub fn _get_factor(&self) -> f32 {
         match self {
             Grade::None => 0.1,
             Grade::Late => 0.25,

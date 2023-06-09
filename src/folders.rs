@@ -1,7 +1,3 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::time::Duration;
-
 use uuid::Uuid;
 
 use crate::card::Card;
@@ -26,7 +22,7 @@ pub fn get_cards_from_category(category: &Category) -> Vec<Card> {
     cards
 }
 
-pub fn get_card_ids_from_category(category: &Category) -> Vec<Id> {
+pub fn _get_card_ids_from_category(category: &Category) -> Vec<Id> {
     let directory = category.as_path();
     let mut toml_files = Vec::new();
 
@@ -50,11 +46,7 @@ pub fn get_size_from_id(id: Id) -> u64 {
 }
 */
 
-pub fn get_size_from_path(path: &PathBuf) -> u64 {
-    std::fs::metadata(path).unwrap().len()
-}
-
-pub fn get_all_unfinished_cards() -> Vec<Card> {
+pub fn _get_all_unfinished_cards() -> Vec<Card> {
     get_all_cards()
         .into_iter()
         .filter(|card| card.meta.suspended)
@@ -70,12 +62,12 @@ pub fn get_all_cards() -> Vec<Card> {
     cards
 }
 
-pub fn get_all_cards_ids() -> Vec<Id> {
+pub fn _get_all_cards_ids() -> Vec<Id> {
     let cats = Category::load_all().unwrap();
     let mut cards = vec![];
 
     for cat in &cats {
-        cards.extend(get_card_ids_from_category(cat));
+        cards.extend(_get_card_ids_from_category(cat));
     }
     cards
 }
@@ -113,17 +105,17 @@ pub fn get_category_from_id_from_fs(id: Id) -> Option<Category> {
     None
 }
 
-pub fn create_category(category: &Category) -> Category {
+pub fn _create_category(category: &Category) -> Category {
     let mut input = String::new();
     std::io::stdin().read_line(&mut input).unwrap();
-    let input = normalize_category_name(&input);
-    let category = category.clone().append(&input);
+    let input = _normalize_category_name(&input);
+    let category = category.clone()._append(&input);
     let path = category.as_path();
     std::fs::create_dir(path).unwrap();
     category
 }
 
-pub fn normalize_category_name(input: &str) -> String {
+pub fn _normalize_category_name(input: &str) -> String {
     let mut normalized = String::with_capacity(input.len());
 
     for c in input.chars() {
