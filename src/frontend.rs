@@ -4,10 +4,11 @@ use std::io;
 
 use crate::card::{Card, Side};
 use crate::common::Category;
+use crate::config::Config;
 use crate::folders::review_card_in_directory;
-use crate::{folders, git_save, Conn, Id};
+use crate::git::git_save;
 
-pub fn main_loop(conn: &Conn) {
+pub fn run(config: Config) {
     let menu_stuff = "Welcome! :D
 
 1. Add new cards
@@ -24,15 +25,15 @@ pub fn main_loop(conn: &Conn) {
         input.pop();
 
         match input.as_str() {
-            "1" => add_cards(conn, Category::default(), true),
-            "2" => review_card_in_directory(conn, &Category::default()),
-            "3" => add_cards(&conn, Category::default(), false),
+            "1" => add_cards(Category::default(), true),
+            "2" => review_card_in_directory(&Category::default()),
+            "3" => add_cards(Category::default(), false),
             "s" => {
                 println!("saving progress!");
-                git_save();
+                git_save(config.read_git_remote().is_some());
             }
             "q" => {
-                git_save();
+                git_save(config.read_git_remote().is_some());
                 return;
             }
             _ => {
@@ -44,14 +45,14 @@ pub fn main_loop(conn: &Conn) {
         };
     }
 }
-
+/*
 fn print_cards(conn: &Conn, cards: &[Id]) {
     println!(
         "actions:
 d: delete
 e: edit
 
-q: quit  
+q: quit
 
 to edit or delete, press first the number of the card then the action letter.
     "
@@ -97,8 +98,8 @@ pub fn view_cards(conn: &Conn, category: &Category) {
         }
     }
 }
-
-pub fn add_cards(conn: &Conn, category: Category, finished: bool) {
+*/
+pub fn add_cards(category: Category, finished: bool) {
     let mut input = String::new();
     let mut front;
     let mut back;
@@ -142,7 +143,7 @@ pub fn add_cards(conn: &Conn, category: Category, finished: bool) {
             card.meta.finished = false;
         }
 
-        card.save_card(Some(category.clone()), conn);
+        card.save_card(Some(category.clone()));
     }
 }
 
@@ -153,12 +154,13 @@ fn clear_screen() {
     term.clear_screen().unwrap();
 }
 
-pub fn review_cards(_conn: &Conn, cards: Vec<Card>, category: &Category) {
+pub fn review_cards(cards: Vec<Card>, category: &Category) {
     let mut grade_given = String::new();
     let cardqty = cards.len();
     for (index, card) in cards.into_iter().enumerate() {
         clear_screen();
         let strength = card.calculate_strength();
+        println!("strength is{}", strength);
         if card.calculate_strength() > 0.9 {
             println!(
                 "Skipping: {}, reason: strength too high: {}",

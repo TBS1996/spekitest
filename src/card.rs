@@ -1,4 +1,3 @@
-use rusqlite::Result;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::fs;
@@ -9,9 +8,7 @@ use std::process::Command;
 use std::time::Duration;
 use uuid::Uuid;
 
-use crate::cache::CardMetaData;
 use crate::folders::get_category_from_id_from_fs;
-use crate::{cache, Conn};
 use crate::{common::current_time, Id};
 
 /*
@@ -27,9 +24,19 @@ impl VerifiedCardPath {
 }
 */
 
-pub struct CardState {}
+pub struct CardFileData {
+    file_name: String,
+    category: Category,
+    last_modified: u64,
+}
 
-pub struct StatefulCard(Card, CardMetaData);
+pub struct CardWithFileData(pub Card, pub CardFileData);
+
+impl CardWithFileData {
+    pub fn into_card(self) -> Card {
+        self.0
+    }
+}
 
 #[derive(Deserialize, Serialize, Debug, Default, Clone)]
 pub struct Card {
@@ -46,59 +53,63 @@ impl Card {
         self.meta.finished && !self.meta.suspended
     }
 
-    pub fn delete_card(id: Id, conn: &Conn) {
-        let path = get_category_from_id_from_fs(id)
-            .unwrap()
-            .as_path_with_id(id);
-        std::fs::remove_file(path).unwrap();
-        cache::delete_the_card_cache(conn, id);
-    }
-
-    pub fn load_from_id(id: Id, conn: &Conn) -> Option<Self> {
-        let category = Self::get_category_from_id(id, conn)?;
+    pub fn load_from_id(id: Id) -> Option<Self> {
+        let category = get_category_from_id_from_fs(id)?;
         let card = Self::parse_toml_to_card(&category.as_path_with_id(id)).ok()?;
         //cache::cache_card_from_id(conn, id);
         Some(card)
     }
-
-    pub fn get_card_path_from_id(conn: &Conn, id: Id) -> PathBuf {
-        let category = Self::get_category_from_id(id, conn).unwrap();
-        category.as_path_with_id(id)
-    }
-
-    pub fn get_card_question(id: Id, conn: &Conn) -> String {
-        Self::load_from_id(id, conn).unwrap().front.text
-    }
-
-    pub fn get_category_from_id(id: Id, conn: &Conn) -> Option<Category> {
-        if let Some(path) = cache::get_cached_path_from_db(id, conn) {
-            if path.as_path_with_id(id).exists() {
-                return Some(path);
-            }
+    /*
+        pub fn delete_card(id: Id, conn: &Conn) {
+            let path: PathBuf = get_category_from_id_from_fs(id)
+                .unwrap()
+                .as_path_with_id(id);
+            std::fs::remove_file(path).unwrap();
+            // cache::delete_the_card_cache(conn, id);
         }
-        get_category_from_id_from_fs(id)
-    }
+
+
+        pub fn get_card_path_from_id(conn: &Conn, id: Id) -> PathBuf {
+            let category = Self::get_category_from_id(id, conn).unwrap();
+            category.as_path_with_id(id)
+        }
+
+        pub fn get_card_question(id: Id, conn: &Conn) -> String {
+            Self::load_from_id(id).unwrap().front.text
+        }
+
+        pub fn get_category_from_id(id: Id, conn: &Conn) -> Option<Category> {
+            /*
+            if let Some(path) = cache::get_cached_path_from_db(id, conn) {
+                if path.as_path_with_id(id).exists() {
+                    return Some(path);
+                }
+            }
+            */
+            get_category_from_id_from_fs(id)
+        }
+    */
 
     // Will either update the card if it exists, or create a new one
 
     /*
 
     */
-    pub fn save_card(self, incoming_category: Option<Category>, conn: &Conn) {
+    pub fn save_card(self, incoming_category: Option<Category>) {
         let incoming_category = incoming_category
             .or_else(|| get_category_from_id_from_fs(self.meta.id))
             .unwrap_or(Category(vec![]));
 
         let id = self.meta.id;
 
-        let x = cache::get_cached_path_from_db(id, conn);
+        let x = get_category_from_id_from_fs(id);
 
         // this implies it's an update operation, since we found the path :D
         if let Some(category) = x {
             if category != incoming_category {
-                Self::move_card(id, &incoming_category, conn).unwrap();
+                Self::move_card(id, &incoming_category).unwrap();
             }
-            cache::cache_card(conn, &self, &category);
+        //      cache::cache_card(conn, &self, &category);
         }
         // this implies it's a create operation, since we didn't find the path here.
         else {
@@ -118,15 +129,15 @@ impl Card {
     }
 
     /// Moves the card and updates the cache.
-    pub fn move_card(id: Id, category: &Category, conn: &Conn) -> io::Result<()> {
+    pub fn move_card(id: Id, category: &Category) -> io::Result<()> {
         let old_path = get_category_from_id_from_fs(id)
             .unwrap()
             .as_path_with_id(id);
         let new_path = category.as_path_with_id(id);
 
         fs::rename(old_path, new_path)?;
-        let card = Self::load_from_id(id, conn).unwrap();
-        cache::cache_card(conn, &card, category);
+        let card = Self::load_from_id(id).unwrap();
+        //   cache::cache_card(conn, &card, category);
         Ok(())
     }
 
@@ -153,16 +164,16 @@ impl Card {
         Ok(())
     }
 
-    pub fn edit_card(id: Id, conn: &Conn) {
-        let card = Self::load_from_id(id, conn).unwrap();
+    pub fn edit_card(id: Id) {
+        let card = Self::load_from_id(id).unwrap();
         let path = get_category_from_id_from_fs(id)
             .unwrap()
             .as_path_with_id(id);
         Command::new("nvim").arg(&path).status().unwrap();
-        cache::cache_card(conn, &card, &Category::from_card_path(&path));
+        //  cache::cache_card(conn, &card, &Category::from_card_path(&path));
     }
 
-    pub fn create_new(front: &str, back: &str, category: &Category) -> Result<Id> {
+    pub fn create_new(front: &str, back: &str, category: &Category) -> Id {
         let card = Card {
             front: Side {
                 text: front.into(),
@@ -178,7 +189,7 @@ impl Card {
         let id = card.meta.id;
 
         card.save_card_to_toml(category).unwrap();
-        Ok(id)
+        id
     }
 
     /*
@@ -210,10 +221,10 @@ impl Card {
     }
 
     /// Search through the folders for the card, if it finds it, update the cache.
-    fn find_and_index(id: Id, conn: &Conn) -> Option<Self> {
+    fn find_and_index(id: Id) -> Option<Self> {
         if let Some(path) = get_category_from_id_from_fs(id) {
             let card = Self::parse_toml_to_card(path.as_path().as_path()).ok()?;
-            cache::cache_card_from_id(conn, id);
+            //   cache::cache_card_from_id(conn, id);
             return Some(card);
         }
         None
@@ -246,6 +257,43 @@ impl Card {
         2.0f64.powf(-lapse_days / interval)
     }
 }
+/*
+pub fn calc_stability(
+    history: &Vec<Review>,
+    new_review: &Review,
+    prev_stability: Duration,
+) -> Duration {
+    let gradefactor = new_review.grade.get_factor();
+    if history.is_empty() {
+        return Duration::from_secs_f32(gradefactor * 86400.);
+    }
+
+    let mut newstory;
+
+    let timevec = get_elapsed_time_reviews({
+        newstory = history.clone();
+        newstory.push(new_review.clone());
+        &newstory
+    });
+    let time_passed = timevec.last().unwrap();
+
+    if gradefactor < 1. {
+        return std::cmp::min(time_passed, &prev_stability).mul_f32(gradefactor);
+    }
+
+    if time_passed > &prev_stability {
+        return time_passed.mul_f32(gradefactor);
+    } else {
+        let base = prev_stability;
+        let max = base.mul_f32(gradefactor);
+        let diff = max - base;
+
+        let percentage = time_passed.div_f32(prev_stability.as_secs_f32());
+
+        return (diff.mul_f32(percentage.as_secs_f32())) + base;
+    }
+}
+*/
 
 #[derive(Deserialize, Serialize, Debug, Default, Clone)]
 #[serde(rename_all = "lowercase")]
@@ -259,6 +307,17 @@ pub enum Grade {
     Some,
     // no hesitation, perfect recall.
     Perfect,
+}
+
+impl Grade {
+    pub fn get_factor(&self) -> f32 {
+        match self {
+            Grade::None => 0.1,
+            Grade::Late => 0.25,
+            Grade::Some => 2.,
+            Grade::Perfect => 3.,
+        }
+    }
 }
 
 impl std::str::FromStr for Grade {

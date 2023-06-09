@@ -7,12 +7,9 @@ use uuid::Uuid;
 use crate::card::Card;
 use crate::common::Category;
 use crate::frontend;
-use crate::{Conn, Id};
+use crate::Id;
 
-pub fn get_last_modified_map_from_category(
-    _conn: &Conn,
-    _category: &Category,
-) -> HashMap<String, Duration> {
+pub fn get_last_modified_map_from_category(_category: &Category) -> HashMap<String, Duration> {
     todo!()
     /*
     let mut stmt = conn.prepare("SELECT id, last_modified FROM cards").unwrap();
@@ -65,11 +62,12 @@ pub fn get_card_ids_from_category(category: &Category) -> Vec<Id> {
     }
     toml_files
 }
-
-pub fn get_size_from_id(id: Id, conn: &Conn) -> u64 {
+/*
+pub fn get_size_from_id(id: Id) -> u64 {
     let cat = Card::get_category_from_id(id, conn).unwrap();
     get_size_from_path(&cat.as_path_with_id(id))
 }
+*/
 
 pub fn get_size_from_path(path: &PathBuf) -> u64 {
     std::fs::metadata(path).unwrap().len()
@@ -100,20 +98,21 @@ pub fn get_all_cards_ids() -> Vec<Id> {
     }
     cards
 }
-
+/*
 pub fn review_unfinished_cards(conn: &Conn) {
     let cards = get_all_unfinished_cards();
 
     for card in cards.iter() {}
 }
+ */
 
-pub fn review_card_in_directory(conn: &Conn, category: &Category) {
+pub fn review_card_in_directory(category: &Category) {
     let cards = get_all_cards();
     let cards = cards
         .into_iter()
         .filter(|card| card.is_ready_for_review())
         .collect();
-    frontend::review_cards(conn, cards, category);
+    frontend::review_cards(cards, category);
 }
 
 pub fn get_category_from_id_from_fs(id: Id) -> Option<Category> {

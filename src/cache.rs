@@ -5,13 +5,6 @@ use crate::common::{current_time, Category};
 use crate::folders::{get_category_from_id_from_fs, get_last_modified_map_from_category};
 use crate::{get_cards_path, Conn, Id};
 
-pub struct CardMetaData {
-    file_name: String,
-    category: Category,
-    last_modified: u64,
-    file_size: u64,
-}
-
 fn sync_my_shit(conn: &Conn) {
     let categories = Category::load_all().unwrap();
 
