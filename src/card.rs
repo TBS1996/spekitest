@@ -369,8 +369,17 @@ impl Review {
 #[derive(Deserialize, Clone, Serialize, Debug, Default)]
 pub struct Side {
     pub text: String,
-    pub audio: Option<String>,
-    pub image: Option<String>,
+    pub audio: MediaSource,
+    pub image: MediaSource,
+}
+
+#[derive(Deserialize, Clone, Serialize, Debug, Default)]
+pub struct MediaSource {
+    // Will search for this namein the media/ folder.
+    local_name: Option<String>,
+    // If local_name isnt found or its a None, it can also download
+    // from the internet.
+    url_backup: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]

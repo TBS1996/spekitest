@@ -13,7 +13,9 @@ use crate::get_share_path;
 pub struct Config {
     play_audio: bool,
     show_images: bool,
+    download_media: bool,
     git_remote: Option<String>,
+    gpt_key: Option<String>,
 }
 
 impl Config {
@@ -71,7 +73,9 @@ impl Default for Config {
         Self {
             play_audio: true,
             show_images: true,
-            git_remote: Default::default(),
+            download_media: true,
+            git_remote: None,
+            gpt_key: None,
         }
     }
 }
