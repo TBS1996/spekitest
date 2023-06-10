@@ -9,7 +9,9 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::folders::get_category_from_id_from_fs;
+use crate::media::AudioSource;
 use crate::{common::current_time, Id};
+use crate::{get_media_path, get_share_path};
 
 /*
 pub struct VerifiedCardPath(PathBuf);
@@ -369,17 +371,10 @@ impl Review {
 #[derive(Deserialize, Clone, Serialize, Debug, Default)]
 pub struct Side {
     pub text: String,
-    pub audio: MediaSource,
-    pub image: MediaSource,
-}
-
-#[derive(Deserialize, Clone, Serialize, Debug, Default)]
-pub struct MediaSource {
-    // Will search for this namein the media/ folder.
-    local_name: Option<String>,
-    // If local_name isnt found or its a None, it can also download
-    // from the internet.
-    url_backup: Option<String>,
+    #[serde(flatten)]
+    pub audio: AudioSource,
+    //#[serde(deserialize_with = "deserialize_image_path")]
+    //pub image: ImagePath,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]

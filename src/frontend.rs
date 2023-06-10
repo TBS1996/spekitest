@@ -138,12 +138,14 @@ pub fn add_cards(category: Category, finished: bool) {
 pub fn review_cards(cards: Vec<Card>, category: &Category) {
     let mut grade_given = String::new();
     let cardqty = cards.len();
-    for (index, card) in cards.into_iter().enumerate() {
+    for (index, mut card) in cards.into_iter().enumerate() {
         println!("Review card");
         println!("{}", card.front.text);
+        card.front.audio.play_audio();
         std::io::stdin().read_line(&mut String::new()).unwrap();
         println!("----------");
         println!("{}", card.back.text);
+        card.back.audio.play_audio();
 
         loop {
             println!("Reviewing {}/{}", index, cardqty);
