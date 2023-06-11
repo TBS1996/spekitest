@@ -1,4 +1,4 @@
-use crate::{get_cards_path, Id};
+use crate::{paths::get_cards_path, Id};
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -16,6 +16,10 @@ pub fn current_time() -> Duration {
 pub struct Category(pub Vec<String>);
 
 impl Category {
+    pub fn import_category() -> Self {
+        Self(vec!["imports".into()])
+    }
+
     pub fn load_all() -> io::Result<Vec<Category>> {
         let root = get_cards_path();
         let root = root.as_path();
@@ -78,7 +82,7 @@ impl Category {
 
     pub fn as_path(&self) -> PathBuf {
         let categories = self.0.join("/");
-        let path = format!("{}{}", get_cards_path().to_string_lossy(), categories);
+        let path = format!("{}/{}", get_cards_path().to_string_lossy(), categories);
         PathBuf::from(path)
     }
     pub fn as_path_with_id(&self, id: Id) -> PathBuf {

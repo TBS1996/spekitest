@@ -6,7 +6,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::get_share_path;
+use crate::paths::get_share_path;
 
 #[derive(Debug, Serialize, Deserialize)]
 

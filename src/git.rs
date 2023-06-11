@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use crate::get_share_path;
+use crate::paths::get_share_path;
 
 pub fn git_save(has_remote: bool) {
     Command::new("git").args(["add", "."]).output().unwrap();

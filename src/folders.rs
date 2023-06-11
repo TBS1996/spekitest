@@ -8,6 +8,7 @@ use crate::Id;
 
 pub fn get_cards_from_category(category: &Category) -> Vec<Card> {
     let directory = category.as_path();
+    dbg!(&directory);
     let mut cards = Vec::new();
 
     for entry in std::fs::read_dir(directory).unwrap() {

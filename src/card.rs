@@ -10,8 +10,8 @@ use uuid::Uuid;
 
 use crate::folders::get_category_from_id_from_fs;
 use crate::media::AudioSource;
+use crate::paths::{get_media_path, get_share_path};
 use crate::{common::current_time, Id};
-use crate::{get_media_path, get_share_path};
 
 /*
 pub struct VerifiedCardPath(PathBuf);
@@ -51,6 +51,15 @@ pub struct Card {
 
 // public
 impl Card {
+    pub fn new(front: Side, back: Side, meta: Meta) -> Self {
+        Card {
+            front,
+            back,
+            meta,
+            history: Vec::new(),
+        }
+    }
+
     pub fn is_ready_for_review(&self, strength: Option<f64>) -> bool {
         let x = self.meta.finished && !self.meta.suspended;
         if !x {
@@ -129,12 +138,13 @@ impl Card {
 
     pub fn save_card_to_toml(self, category: &Category) -> Result<PathBuf, toml::ser::Error> {
         let toml = toml::to_string(&self).unwrap();
+        std::fs::create_dir_all(category.as_path()).unwrap();
         let path = category
             .as_path()
             .join(self.front.text)
             .with_extension("toml");
 
-        std::fs::write(&path, toml).expect("Unable to write file");
+        std::fs::write(&path, toml);
         Ok(path)
     }
 

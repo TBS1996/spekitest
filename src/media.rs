@@ -3,7 +3,7 @@ use std::{fs::File, io::BufReader, path::PathBuf};
 use rodio::Source;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::get_media_path;
+use crate::paths::get_media_path;
 
 #[derive(Deserialize, Clone, Serialize, Debug, Default)]
 pub struct AudioSource {
@@ -16,8 +16,15 @@ pub struct AudioSource {
 }
 
 impl AudioSource {
+    pub fn new(local_name: Option<String>, url_backup: Option<String>) -> Self {
+        Self {
+            local_name,
+            url_backup,
+        }
+    }
+
     pub fn play_audio(&mut self) -> Option<()> {
-        let path = self.get_path().unwrap();
+        let path = self.get_path()?;
         let (_stream, stream_handle) = rodio::OutputStream::try_default().unwrap();
 
         // Load a sound from a file
