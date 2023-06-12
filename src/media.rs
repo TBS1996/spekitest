@@ -1,7 +1,7 @@
 use std::{fs::File, io::BufReader, path::PathBuf};
 
 use rodio::Source;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 use crate::paths::get_media_path;
 
@@ -23,21 +23,24 @@ impl AudioSource {
         }
     }
 
-    pub fn play_audio(&mut self) -> Option<()> {
+    pub fn play_audio(&mut self) -> Option<std::thread::JoinHandle<()>> {
         let path = self.get_path()?;
-        let (_stream, stream_handle) = rodio::OutputStream::try_default().unwrap();
 
-        // Load a sound from a file
-        let file = BufReader::new(File::open(path).unwrap());
-        let source = rodio::Decoder::new(file).unwrap();
+        let handle = std::thread::spawn(move || {
+            let (_stream, stream_handle) = rodio::OutputStream::try_default().unwrap();
 
-        // Play the sound
-        stream_handle.play_raw(source.convert_samples()).unwrap();
+            // Load a sound from a file
+            let file = BufReader::new(File::open(path).unwrap());
+            let source = rodio::Decoder::new(file).unwrap();
 
-        // The sound plays in a separate audio thread, so we need to keep the main thread alive while it's playing.
-        std::thread::sleep(std::time::Duration::from_secs(10));
+            // Play the sound
+            stream_handle.play_raw(source.convert_samples()).unwrap();
 
-        Some(())
+            // Block the thread until audio is done.
+            std::thread::sleep(std::time::Duration::from_secs(30));
+        });
+
+        Some(handle)
     }
 }
 

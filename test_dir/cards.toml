@@ -1,0 +1,15 @@
+history = []
+
+[front]
+text = ""
+
+[back]
+text = ""
+
+[meta]
+id = "000a0a00-c943-4c4b-b7bf-f7d483208eb0"
+dependencies = []
+dependents = []
+suspended = false
+finished = true
+tags = []

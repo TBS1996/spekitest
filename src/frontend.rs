@@ -5,14 +5,14 @@ use std::io::stdout;
 use crate::card::{Card, Side};
 use crate::common::Category;
 use crate::config::Config;
-use crate::folders::review_card_in_directory;
+use crate::folders::{get_pending_cards_from_category, get_review_cards_from_category};
 use crate::git::git_save;
 
 pub fn run(config: Config) {
     let menu_items = vec![
         "Add new cards",
         "Review cards",
-        "Add unfinished cards",
+        "Review pending cards",
         "Save progress",
         "Quit",
     ];
@@ -20,8 +20,8 @@ pub fn run(config: Config) {
     loop {
         match draw_menu(&menu_items) {
             0 => add_cards(Category::default(), true),
-            1 => review_card_in_directory(&Category::default()),
-            2 => add_cards(Category::default(), false),
+            1 => review_cards(),
+            2 => review_pending_cards(),
             3 => {
                 println!("saving progress!");
                 git_save(config.read_git_remote().is_some());
@@ -34,60 +34,7 @@ pub fn run(config: Config) {
         };
     }
 }
-/*
-fn print_cards(conn: &Conn, cards: &[Id]) {
-    println!(
-        "actions:
-d: delete
-e: edit
 
-q: quit
-
-to edit or delete, press first the number of the card then the action letter.
-    "
-    );
-
-    for (index, id) in cards.iter().enumerate() {
-        let question = Card::get_card_question(*id, conn);
-        println!("{}: {}", index, question);
-    }
-}
-
-pub fn view_cards(conn: &Conn, category: &Category) {
-    let cards = folders::get_card_ids_from_category(category);
-    print_cards(conn, &cards);
-
-    let mut input = String::new();
-    loop {
-        input.clear();
-        std::io::stdin().read_line(&mut input).unwrap();
-        input.pop();
-        if input == "q" {
-            return;
-        }
-
-        let x = input.split_once(' ');
-        if let Some(x) = x {
-            if let (Ok(card), action) = (x.0.parse::<usize>(), x.1) {
-                if cards.len() > card {
-                    match action {
-                        "d" => {
-                            Card::delete_card(cards[card], conn);
-                            let cards = folders::get_card_ids_from_category(category);
-                            print_cards(conn, &cards);
-                        }
-                        "e" => Card::edit_card(cards[card], conn),
-                        "q" => return,
-                        _ => {
-                            let _ = dbg!(&action);
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-*/
 pub fn add_cards(category: Category, finished: bool) {
     let mut input = String::new();
     let mut front;
@@ -135,27 +82,34 @@ pub fn add_cards(category: Category, finished: bool) {
     }
 }
 
-pub fn review_cards(cards: Vec<Card>, category: &Category) {
-    let mut grade_given = String::new();
-    let cardqty = cards.len();
-    for (index, mut card) in cards.into_iter().enumerate() {
-        println!("Review card");
-        println!("{}", card.front.text);
+pub fn review_pending_cards() {
+    for category in Category::load_all().unwrap() {
+        let cards = get_pending_cards_from_category(&category);
+        if rev_cards(cards, &category) {
+            return;
+        }
+    }
+    draw_message("Nothing left to review!");
+}
+
+fn rev_cards(cards: Vec<Card>, category: &Category) -> bool {
+    for (_, mut card) in cards.into_iter().enumerate() {
+        let msg = "Review card".to_string();
+        let msg = format!("{}\n\n{}", msg, card.front.text);
+        draw_message(&msg);
         card.front.audio.play_audio();
+        let msg = format!("{}\n\n{}", msg, "----------------");
+        let msg = format!("{}\n\n{}", msg, card.back.text);
         std::io::stdin().read_line(&mut String::new()).unwrap();
-        println!("----------");
-        println!("{}", card.back.text);
         card.back.audio.play_audio();
 
         loop {
-            println!("Reviewing {}/{}", index, cardqty);
-            grade_given.clear();
-            std::io::stdin().read_line(&mut grade_given).unwrap();
-            grade_given.pop();
+            let grade_given = draw_message(&msg);
+            if grade_given == 'q' {
+                return true;
+            }
 
-            let grade = grade_given.parse();
-
-            match grade {
+            match grade_given.to_string().parse() {
                 Ok(grade) => {
                     card.new_review(grade, category);
                 }
@@ -164,9 +118,20 @@ pub fn review_cards(cards: Vec<Card>, category: &Category) {
             break;
         }
     }
-    println!("Nothing left to review :D");
+    false
 }
 
+pub fn review_cards() {
+    for category in Category::load_all().unwrap() {
+        let cards = get_review_cards_from_category(&category);
+        if rev_cards(cards, &category) {
+            return;
+        }
+    }
+    draw_message("Nothing left to review!");
+}
+
+use crossterm::event::KeyEvent;
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
     event::{read, Event, KeyCode},
@@ -175,18 +140,31 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
 };
 
-pub fn draw_message(message: &str) {
+pub fn draw_message(message: &str) -> char {
     enable_raw_mode().unwrap();
 
     let mut stdout = stdout();
     execute!(stdout, Hide).unwrap();
+    execute!(stdout, Show, MoveTo(0, 0)).unwrap();
 
     execute!(stdout, Clear(ClearType::All)).unwrap();
-    println!("{message}");
+    println!("{}", message);
     execute!(stdout, ResetColor).unwrap();
-    read().unwrap();
+
+    let pressed_char = loop {
+        match read().unwrap() {
+            Event::Key(KeyEvent {
+                code: KeyCode::Char(c),
+                ..
+            }) => break c,
+            _ => {}
+        }
+    };
+
     execute!(stdout, Clear(ClearType::All)).unwrap();
     disable_raw_mode().unwrap();
+
+    pressed_char
 }
 
 fn draw_menu(items: &[&str]) -> usize {

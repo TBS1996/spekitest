@@ -6,8 +6,6 @@ use config::Config;
 use frontend::run;
 use git::git_stuff;
 
-use std::path::PathBuf;
-
 use uuid::Uuid;
 
 mod card;

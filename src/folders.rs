@@ -2,13 +2,10 @@ use uuid::Uuid;
 
 use crate::card::Card;
 use crate::common::Category;
-use crate::frontend;
-use crate::frontend::draw_message;
 use crate::Id;
 
 pub fn get_cards_from_category(category: &Category) -> Vec<Card> {
     let directory = category.as_path();
-    dbg!(&directory);
     let mut cards = Vec::new();
 
     for entry in std::fs::read_dir(directory).unwrap() {
@@ -72,25 +69,21 @@ pub fn _get_all_cards_ids() -> Vec<Id> {
     }
     cards
 }
-/*
-pub fn review_unfinished_cards(conn: &Conn) {
-    let cards = get_all_unfinished_cards();
 
-    for card in cards.iter() {}
-}
- */
-
-pub fn review_card_in_directory(category: &Category) {
-    let cards = get_all_cards();
-    let cards: Vec<Card> = cards
+pub fn get_pending_cards_from_category(category: &Category) -> Vec<Card> {
+    let cards = get_cards_from_category(category);
+    cards
         .into_iter()
-        .filter(|card| card.is_ready_for_review(Some(0.9)))
-        .collect();
-    if cards.is_empty() {
-        draw_message("Nothing to review!");
-        return;
-    }
-    frontend::review_cards(cards, category);
+        .filter(|card| card.meta.stability.is_none() && !card.meta.suspended)
+        .collect()
+}
+
+pub fn get_review_cards_from_category(category: &Category) -> Vec<Card> {
+    let cards = get_cards_from_category(category);
+    cards
+        .into_iter()
+        .filter(|card| card.is_ready_for_review())
+        .collect()
 }
 
 pub fn get_category_from_id_from_fs(id: Id) -> Option<Category> {
@@ -104,26 +97,4 @@ pub fn get_category_from_id_from_fs(id: Id) -> Option<Category> {
         }
     }
     None
-}
-
-pub fn _create_category(category: &Category) -> Category {
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input).unwrap();
-    let input = _normalize_category_name(&input);
-    let category = category.clone()._append(&input);
-    let path = category.as_path();
-    std::fs::create_dir(path).unwrap();
-    category
-}
-
-pub fn _normalize_category_name(input: &str) -> String {
-    let mut normalized = String::with_capacity(input.len());
-
-    for c in input.chars() {
-        if c.is_ascii_alphanumeric() || c == ' ' {
-            normalized.push(c);
-        }
-    }
-
-    normalized
 }
