@@ -1,3 +1,5 @@
+use crate::card::Card;
+use crate::folders::get_cards_from_category;
 use crate::{paths::get_cards_path, Id};
 use std::fs;
 use std::io;
@@ -16,6 +18,30 @@ pub fn current_time() -> Duration {
 pub struct Category(pub Vec<String>);
 
 impl Category {
+    pub fn sort_categories(categories: &mut [Category]) {
+        categories.sort_by(|a, b| {
+            let a_str = a.0.join("/");
+            let b_str = b.0.join("/");
+            a_str.cmp(&b_str)
+        });
+    }
+
+    pub fn get_containing_cards(&self) -> Vec<Card> {
+        get_cards_from_category(self)
+    }
+
+    pub fn print_it(&self) -> String {
+        self.0.last().unwrap_or(&"root".to_string()).clone()
+    }
+
+    pub fn print_it_with_depth(&self) -> String {
+        let mut s = String::new();
+        for _ in 0..self.0.len() {
+            s.push_str("  ");
+        }
+        format!("{}{}", s, self.print_it())
+    }
+
     pub fn import_category() -> Self {
         Self(vec!["imports".into()])
     }
@@ -90,6 +116,10 @@ impl Category {
         folder = folder.join(id.to_string());
         folder.set_extension("toml");
         folder
+    }
+
+    pub fn is_root(&self) -> bool {
+        self.0.is_empty()
     }
 }
 

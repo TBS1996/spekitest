@@ -47,24 +47,26 @@ impl Card {
         }
     }
 
+    pub fn new_simple(front: String, back: String) -> Self {
+        Card {
+            front: Side {
+                text: front,
+                ..Default::default()
+            },
+            back: Side {
+                text: back,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
     pub fn recall_rate(&self) -> Option<f32> {
         let days_passed = self.days_since_last_review()?;
         let stability = self.meta.stability?;
         Some(Self::calculate_strength(days_passed, stability))
     }
 
-    fn ccalculate_strength(days_passed: f32, stability: f32) -> f32 {
-        let decay_rate = std::f32::consts::LN_10 / stability;
-        1.0 - (-days_passed * decay_rate).exp()
-    }
-    fn cccalculate_strength(days_passed: f32, stability: f32) -> f32 {
-        let decay_rate = std::f32::consts::LN_2 / stability;
-        (-days_passed * decay_rate).exp()
-    }
-    fn ccccalculate_strength(days_passed: f32, stability: f32) -> f32 {
-        let decay_rate = -std::f32::consts::LN_10 / stability;
-        (-days_passed * decay_rate).exp()
-    }
     fn calculate_strength(days_passed: f32, stability: f32) -> f32 {
         let base: f32 = 0.9;
         (base.ln() * days_passed / stability).exp()
@@ -117,12 +119,12 @@ impl Card {
         }
     }
 
-    pub fn save_card_to_toml(self, category: &Category) -> Result<PathBuf, toml::ser::Error> {
+    pub fn save_card_to_toml(&self, category: &Category) -> Result<PathBuf, toml::ser::Error> {
         let toml = toml::to_string(&self).unwrap();
         std::fs::create_dir_all(category.as_path()).unwrap();
         let path = category
             .as_path()
-            .join(self.front.text)
+            .join(self.front.text.clone())
             .with_extension("toml");
 
         let _ = std::fs::write(&path, toml);
@@ -197,7 +199,7 @@ impl Card {
         grade.get_factor() * time_passed.unwrap_or(1.)
     }
 
-    pub fn new_review(mut self, grade: Grade, category: &Category) {
+    pub fn new_review(&mut self, grade: Grade, category: &Category) {
         let review = Review::new(grade.clone());
         self.history.push(review);
         self.meta.stability = Some(Self::new_stability(grade, self.meta.stability));
