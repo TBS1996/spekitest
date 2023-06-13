@@ -9,21 +9,37 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::common::Category;
-use crate::folders::get_category_from_id_from_fs;
+use crate::folders::{get_all_cards_full, get_category_from_id_from_fs};
 use crate::media::AudioSource;
 use crate::{common::current_time, Id};
 
 pub struct CardFileData {
-    file_name: String,
-    category: Category,
-    last_modified: u64,
+    pub file_name: String,
+    pub category: Category,
+    pub last_modified: Duration,
 }
 
 pub struct CardWithFileData(pub Card, pub CardFileData);
 
 impl CardWithFileData {
+    pub fn get_full_card_from_id(id: Id) -> Option<Self> {
+        let cards = get_all_cards_full();
+
+        cards.into_iter().find(|card| card.0.meta.id == id)
+    }
+
     pub fn into_card(self) -> Card {
         self.0
+    }
+
+    pub fn into_cards(v: Vec<Self>) -> Vec<Card> {
+        v.into_iter().map(|c| c.into_card()).collect()
+    }
+
+    pub fn full_path(&self) -> PathBuf {
+        let mut path = self.1.category.as_path().join(self.1.file_name.clone());
+        path.set_extension("toml");
+        path
     }
 }
 
@@ -91,10 +107,8 @@ impl Card {
     }
 
     pub fn load_from_id(id: Id) -> Option<Self> {
-        let category = get_category_from_id_from_fs(id)?;
-        let card = Self::parse_toml_to_card(&category.as_path_with_id(id)).ok()?;
-        //cache::cache_card_from_id(conn, id);
-        Some(card)
+        let card = CardWithFileData::get_full_card_from_id(id)?;
+        Some(card.into_card())
     }
 
     pub fn save_card(self, incoming_category: Option<Category>) {
@@ -104,19 +118,7 @@ impl Card {
 
         let id = self.meta.id;
 
-        let x = get_category_from_id_from_fs(id);
-
-        // this implies it's an update operation, since we found the path :D
-        if let Some(category) = x {
-            if category != incoming_category {
-                Self::move_card(id, &incoming_category).unwrap();
-            }
-        //      cache::cache_card(conn, &self, &category);
-        }
-        // this implies it's a create operation, since we didn't find the path here.
-        else {
-            self.save_card_to_toml(&incoming_category).unwrap();
-        }
+        self.save_card_to_toml(&incoming_category).unwrap();
     }
 
     pub fn save_card_to_toml(&self, category: &Category) -> Result<PathBuf, toml::ser::Error> {
@@ -129,19 +131,6 @@ impl Card {
 
         let _ = std::fs::write(&path, toml);
         Ok(path)
-    }
-
-    /// Moves the card and updates the cache.
-    pub fn move_card(id: Id, category: &Category) -> io::Result<()> {
-        let old_path = get_category_from_id_from_fs(id)
-            .unwrap()
-            .as_path_with_id(id);
-        let new_path = category.as_path_with_id(id);
-
-        fs::rename(old_path, new_path)?;
-        let _card = Self::load_from_id(id).unwrap();
-        //   cache::cache_card(conn, &card, category);
-        Ok(())
     }
 
     // The closure takes a Card and returns a Result.
@@ -165,15 +154,6 @@ impl Card {
             }
         }
         Ok(())
-    }
-
-    pub fn _edit_card(id: Id) {
-        let _card = Self::load_from_id(id).unwrap();
-        let path = get_category_from_id_from_fs(id)
-            .unwrap()
-            .as_path_with_id(id);
-        Command::new("nvim").arg(&path).status().unwrap();
-        //  cache::cache_card(conn, &card, &Category::from_card_path(&path));
     }
 
     pub fn _create_new(front: &str, back: &str, category: &Category) -> Id {

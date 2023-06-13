@@ -1,10 +1,11 @@
-use crate::card::Card;
+use crate::card::{Card, CardWithFileData};
 use crate::folders::get_cards_from_category;
 use crate::{paths::get_cards_path, Id};
 use std::fs;
-use std::io;
+use std::io::{self, ErrorKind};
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::Command;
 use std::time::{Duration, SystemTime};
 
 pub fn current_time() -> Duration {
@@ -27,7 +28,7 @@ impl Category {
     }
 
     pub fn get_containing_cards(&self) -> Vec<Card> {
-        get_cards_from_category(self)
+        CardWithFileData::into_cards(get_cards_from_category(self))
     }
 
     pub fn print_it(&self) -> String {
@@ -111,12 +112,6 @@ impl Category {
         let path = format!("{}/{}", get_cards_path().to_string_lossy(), categories);
         PathBuf::from(path)
     }
-    pub fn as_path_with_id(&self, id: Id) -> PathBuf {
-        let mut folder = self.as_path();
-        folder = folder.join(id.to_string());
-        folder.set_extension("toml");
-        folder
-    }
 
     pub fn is_root(&self) -> bool {
         self.0.is_empty()
@@ -189,4 +184,17 @@ mod tests {
         insta::assert_debug_snapshot!(x);
     }
     */
+}
+
+pub fn open_file_with_vim(path: PathBuf) -> io::Result<()> {
+    let status = Command::new("vim").arg(path).status()?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            ErrorKind::Other,
+            "Failed to open file with vim",
+        ))
+    }
 }

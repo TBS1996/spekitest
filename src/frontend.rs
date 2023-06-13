@@ -3,9 +3,11 @@
 use std::io::{stdout, Stdout};
 
 use crate::card::Card;
-use crate::common::Category;
+use crate::common::{open_file_with_vim, Category};
 use crate::config::Config;
-use crate::folders::{get_pending_cards_from_category, get_review_cards_from_category};
+use crate::folders::{
+    get_path_from_id, get_pending_cards_from_category, get_review_cards_from_category,
+};
 use crate::git::git_save;
 
 pub fn run(config: Config) {
@@ -192,6 +194,9 @@ fn rev_cards(stdout: &mut Stdout, mut cards: Vec<Card>, category: &Category) -> 
         loop {
             match get_char() {
                 'q' => return false,
+                'e' => {
+                    open_file_with_vim(get_path_from_id(card.meta.id, category).unwrap()).unwrap();
+                }
                 c => match c.to_string().parse() {
                     Ok(grade) => {
                         card.new_review(grade, category);
