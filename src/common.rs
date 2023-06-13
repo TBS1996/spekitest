@@ -1,6 +1,6 @@
 use crate::card::{Card, CardWithFileData};
 use crate::folders::get_cards_from_category;
-use crate::{paths::get_cards_path, Id};
+use crate::{paths::get_cards_path};
 use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::Path;

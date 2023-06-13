@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::paths::get_share_path;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 
 pub struct Config {
     play_audio: bool,

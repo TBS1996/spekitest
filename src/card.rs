@@ -4,7 +4,7 @@ use std::fs;
 use std::fs::read_to_string;
 use std::io::{self};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -116,7 +116,7 @@ impl Card {
             .or_else(|| get_category_from_id_from_fs(self.meta.id))
             .unwrap_or(Category(vec![]));
 
-        let id = self.meta.id;
+        let _id = self.meta.id;
 
         self.save_card_to_toml(&incoming_category).unwrap();
     }

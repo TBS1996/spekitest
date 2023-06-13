@@ -7,8 +7,10 @@ use crate::common::{open_file_with_vim, Category};
 use crate::config::Config;
 use crate::folders::{
     get_path_from_id, get_pending_cards_from_category, get_review_cards_from_category,
+    open_folder_in_explorer,
 };
 use crate::git::git_save;
+use crate::paths::get_share_path;
 
 pub fn run(config: Config) {
     enable_raw_mode().unwrap();
@@ -19,17 +21,19 @@ pub fn run(config: Config) {
         "Add new cards",
         "Review cards",
         "Review pending cards",
-        "Save progress",
-        "Quit",
+        "Open in file explorer",
     ];
-    loop {
-        match draw_menu(&mut stdout, &menu_items, false).unwrap() {
+
+    while let Some(choice) = draw_menu(&mut stdout, &menu_items, true) {
+        match choice {
             0 => {
                 let category = match pick_category(&mut stdout, true) {
                     Some(category) => category,
                     None => continue,
                 };
                 add_cards(&mut stdout, category, true);
+                let has_remote = config.read_git_remote().is_some();
+                let _ = std::thread::spawn(move || git_save(has_remote));
             }
             1 => {
                 let category = match pick_category(&mut stdout, true) {
@@ -37,6 +41,8 @@ pub fn run(config: Config) {
                     None => continue,
                 };
                 review_cards(&mut stdout, category);
+                let has_remote = config.read_git_remote().is_some();
+                let _ = std::thread::spawn(move || git_save(has_remote));
             }
             2 => {
                 let category = match pick_category(&mut stdout, true) {
@@ -44,19 +50,15 @@ pub fn run(config: Config) {
                     None => continue,
                 };
                 review_pending_cards(&mut stdout, category);
+                let has_remote = config.read_git_remote().is_some();
+                let _ = std::thread::spawn(move || git_save(has_remote));
             }
-            3 => {
-                println!("saving progress!");
-                git_save(config.read_git_remote().is_some());
-            }
-            4 => {
-                git_save(config.read_git_remote().is_some());
-                disable_raw_mode().unwrap();
-                return;
-            }
+            3 => open_folder_in_explorer(get_share_path().as_path()).unwrap(),
             _ => {}
         };
     }
+    execute!(stdout, Show).unwrap();
+    disable_raw_mode().unwrap();
 }
 
 fn pick_category(stdout: &mut Stdout, optional: bool) -> Option<Category> {
@@ -173,30 +175,69 @@ fn update_card_review_status(stdout: &mut Stdout, i: usize, qty: usize, category
     update_status_bar(stdout, &msg);
 }
 
-fn rev_cards(stdout: &mut Stdout, mut cards: Vec<Card>, category: &Category) -> bool {
+fn print_card_review_front(stdout: &mut Stdout, card: &mut Card, sound: bool) {
+    execute!(stdout, MoveTo(0, 1)).unwrap();
+    println!("{}", card.front.text);
+    if sound {
+        card.front.audio.play_audio();
+    }
+}
+
+fn print_card_review_back(stdout: &mut Stdout, card: &mut Card, sound: bool) {
+    move_far_left(stdout);
+    execute!(stdout, MoveDown(1)).unwrap();
+    move_far_left(stdout);
+    println!("------------------");
+    execute!(stdout, MoveDown(1)).unwrap();
+    move_far_left(stdout);
+    println!("{}", card.back.text);
+    move_far_left(stdout);
+
+    if sound {
+        card.back.audio.play_audio();
+    }
+}
+
+fn should_exit(key: &KeyCode) -> bool {
+    matches!(key, KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q'))
+}
+
+fn print_card_review_full(stdout: &mut Stdout, card: &mut Card) {
     execute!(stdout, Clear(ClearType::All)).unwrap();
+    print_card_review_front(stdout, card, false);
+    print_card_review_back(stdout, card, false);
+}
+
+fn rev_cards(stdout: &mut Stdout, mut cards: Vec<Card>, category: &Category) -> bool {
     let qty = cards.len();
 
     for (i, card) in cards.iter_mut().enumerate() {
+        execute!(stdout, Clear(ClearType::All)).unwrap();
         update_card_review_status(stdout, i, qty, category);
-        execute!(stdout, MoveTo(0, 1)).unwrap();
-        println!("{}", card.front.text);
-        card.front.audio.play_audio();
-        get_keycode();
-        move_far_left(stdout);
-        execute!(stdout, MoveDown(1)).unwrap();
-        move_far_left(stdout);
-        println!("------------------");
-        execute!(stdout, MoveDown(1)).unwrap();
-        move_far_left(stdout);
+        print_card_review_front(stdout, card, true);
 
-        card.back.audio.play_audio();
+        if should_exit(&get_keycode()) {
+            return false;
+        }
+
+        print_card_review_back(stdout, card, true);
         loop {
             match get_char() {
                 'q' => return false,
                 'e' => {
                     open_file_with_vim(get_path_from_id(card.meta.id, category).unwrap()).unwrap();
+                    *card = Card::load_from_id(card.meta.id).unwrap();
+                    print_card_review_full(stdout, card);
                 }
+                'j' => {
+                    card.meta.suspended = true;
+                    card.clone().save_card(Some(category.to_owned()));
+                    draw_message(stdout, "card suspended");
+                    break;
+                }
+                // skip card
+                's' => break,
+
                 c => match c.to_string().parse() {
                     Ok(grade) => {
                         card.new_review(grade, category);
@@ -226,7 +267,7 @@ pub fn review_cards(stdout: &mut Stdout, category: Category) {
     draw_message(stdout, "Nothing left to review!");
 }
 
-use crossterm::cursor::{self, MoveDown, MoveLeft};
+use crossterm::cursor::{self, MoveDown, MoveLeft, Show};
 use crossterm::event::KeyEvent;
 use crossterm::style::Print;
 use crossterm::terminal;
@@ -294,20 +335,20 @@ fn draw_menu(stdout: &mut Stdout, items: &[&str], optional: bool) -> Option<usiz
         // Await input from user
         if let Event::Key(event) = read().unwrap() {
             match event.code {
-                KeyCode::Up => {
+                KeyCode::Up | KeyCode::Char('k') => {
                     selected = selected.saturating_sub(1);
                 }
-                KeyCode::Down => {
+                KeyCode::Down | KeyCode::Char('j') => {
                     if selected < items.len() - 1 {
                         selected += 1;
                     }
                 }
-                KeyCode::Enter => {
+                KeyCode::Enter | KeyCode::Char(' ') => {
                     execute!(stdout, Clear(ClearType::All)).unwrap();
                     execute!(stdout, MoveTo(0, items.len() as u16 + 1)).unwrap();
                     return Some(selected);
                 }
-                KeyCode::Char('q') if optional => return None,
+                KeyCode::Char('q') | KeyCode::Esc if optional => return None,
                 _ => {}
             }
         }

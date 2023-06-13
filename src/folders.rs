@@ -1,11 +1,31 @@
-use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{Duration, UNIX_EPOCH};
 
 use uuid::Uuid;
 
 use crate::card::{Card, CardFileData, CardWithFileData};
 use crate::common::Category;
 use crate::Id;
+
+pub fn open_folder_in_explorer(path: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer").arg(path).status()?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open").arg(path).status()?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open").arg(path).status()?;
+    }
+
+    Ok(())
+}
 
 pub fn get_last_modified(path: PathBuf) -> Duration {
     let metadata = std::fs::metadata(path).unwrap();
@@ -111,7 +131,7 @@ pub fn get_all_cards_full() -> Vec<CardWithFileData> {
     let mut cards = vec![];
 
     for cat in &cats {
-        let mut cards_from_category = get_cards_from_category(cat);
+        let cards_from_category = get_cards_from_category(cat);
         cards.extend(cards_from_category);
     }
     cards
