@@ -56,6 +56,8 @@ impl Config {
         let mut file = match File::open(Self::config_path()) {
             Ok(file) => file,
             Err(_) => {
+                let _ =
+                    std::fs::rename(Self::config_path(), get_share_path().join("invalid_config"));
                 Self::default().save()?;
                 File::open(Self::config_path())?
             }

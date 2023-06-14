@@ -1,6 +1,6 @@
 [package]
 name = "spekinew"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "new version of speki, more git-oriented"
 license = "GPL-2.0-only"

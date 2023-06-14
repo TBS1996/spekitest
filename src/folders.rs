@@ -6,9 +6,15 @@ use uuid::Uuid;
 
 use crate::card::{Card, CardFileData, CardWithFileData};
 use crate::common::Category;
+use crate::paths::get_share_path;
 use crate::Id;
 
-pub fn open_folder_in_explorer(path: &Path) -> std::io::Result<()> {
+pub fn open_share_path_in_explorer() -> std::io::Result<()> {
+    let path = get_share_path();
+    open_folder_in_explorer(path.as_path())
+}
+
+fn open_folder_in_explorer(path: &Path) -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
     {
         Command::new("explorer").arg(path).status()?;

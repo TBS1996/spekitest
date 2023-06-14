@@ -175,14 +175,23 @@ impl Card {
         id
     }
 
-    fn new_stability(grade: Grade, time_passed: Option<f32>) -> f32 {
-        grade.get_factor() * time_passed.unwrap_or(1.)
+    fn new_stability(grade: Grade, time_passed: Option<Duration>) -> f32 {
+        grade.get_factor()
+            * (time_passed
+                .unwrap_or(Duration::from_secs_f32(86400.))
+                .as_secs_f32()
+                / 86400.)
+    }
+
+    fn time_passed_since_last_review(&self) -> Option<Duration> {
+        Some(current_time() - self.history.last()?.timestamp)
     }
 
     pub fn new_review(&mut self, grade: Grade, category: &Category) {
         let review = Review::new(grade.clone());
+        let time_passed = self.time_passed_since_last_review();
         self.history.push(review);
-        self.meta.stability = Some(Self::new_stability(grade, self.meta.stability));
+        self.meta.stability = Some(Self::new_stability(grade, time_passed));
         self.save_card_to_toml(category).unwrap();
     }
 
@@ -197,14 +206,14 @@ impl Card {
 #[derive(Deserialize, Serialize, Debug, Default, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum Grade {
-    // no recall, not even when you saw the answer.
+    // No recall, not even when you saw the answer.
     #[default]
     None,
-    // no recall, but you remember the answer when you read it.
+    // No recall, but you remember the answer when you read it.
     Late,
-    // struggled but you got the answer right or somewhat right/
+    // Struggled but you got the answer right or somewhat right.
     Some,
-    // no hesitation, perfect recall.
+    // No hesitation, perfect recall.
     Perfect,
 }
 

@@ -7,10 +7,9 @@ use crate::common::{open_file_with_vim, Category};
 use crate::config::Config;
 use crate::folders::{
     get_path_from_id, get_pending_cards_from_category, get_review_cards_from_category,
-    open_folder_in_explorer,
+    open_share_path_in_explorer,
 };
 use crate::git::git_save;
-use crate::paths::get_share_path;
 
 pub fn run(config: Config) {
     enable_raw_mode().unwrap();
@@ -27,7 +26,7 @@ pub fn run(config: Config) {
     while let Some(choice) = draw_menu(&mut stdout, &menu_items, true) {
         match choice {
             0 => {
-                let category = match pick_category(&mut stdout, true) {
+                let category = match choose_folder(&mut stdout, true) {
                     Some(category) => category,
                     None => continue,
                 };
@@ -36,7 +35,7 @@ pub fn run(config: Config) {
                 let _ = std::thread::spawn(move || git_save(has_remote));
             }
             1 => {
-                let category = match pick_category(&mut stdout, true) {
+                let category = match choose_folder(&mut stdout, true) {
                     Some(category) => category,
                     None => continue,
                 };
@@ -45,7 +44,7 @@ pub fn run(config: Config) {
                 let _ = std::thread::spawn(move || git_save(has_remote));
             }
             2 => {
-                let category = match pick_category(&mut stdout, true) {
+                let category = match choose_folder(&mut stdout, true) {
                     Some(category) => category,
                     None => continue,
                 };
@@ -53,7 +52,7 @@ pub fn run(config: Config) {
                 let has_remote = config.read_git_remote().is_some();
                 let _ = std::thread::spawn(move || git_save(has_remote));
             }
-            3 => open_folder_in_explorer(get_share_path().as_path()).unwrap(),
+            3 => open_share_path_in_explorer().unwrap(),
             _ => {}
         };
     }
@@ -61,19 +60,9 @@ pub fn run(config: Config) {
     disable_raw_mode().unwrap();
 }
 
-fn pick_category(stdout: &mut Stdout, optional: bool) -> Option<Category> {
-    let mut categories = Category::load_all().unwrap();
-    Category::sort_categories(&mut categories);
-
-    let items_strings: Vec<String> = categories.iter().map(|s| s.print_it_with_depth()).collect();
-    let items: Vec<&str> = items_strings.iter().map(|s| s.as_str()).collect();
-
-    draw_menu(stdout, &items, optional).map(|i| categories[i].clone())
-}
-
 use std::io::Write;
 
-pub fn read_user_input(stdout: &mut Stdout) -> String {
+pub fn read_user_input(stdout: &mut Stdout) -> Option<String> {
     let mut input = String::new();
 
     loop {
@@ -98,11 +87,12 @@ pub fn read_user_input(stdout: &mut Stdout) -> String {
                     stdout.flush().unwrap();
                 }
                 KeyCode::Enter => break,
+                KeyCode::Esc => return None,
                 _ => {}
             }
         }
     }
-    input
+    Some(input)
 }
 
 fn move_far_left(stdout: &mut Stdout) {
@@ -123,21 +113,21 @@ pub fn add_cards(stdout: &mut Stdout, category: Category, finished: bool) {
         execute!(stdout, Clear(ClearType::All)).unwrap();
         execute!(stdout, MoveTo(0, 1)).unwrap();
         update_status_bar(stdout, "--front side--");
-        let front_text = read_user_input(stdout);
 
-        if front_text == "q" {
-            return;
-        }
+        let front_text = match read_user_input(stdout) {
+            Some(text) => text,
+            None => return,
+        };
 
         execute!(stdout, MoveDown(2)).unwrap();
         move_far_left(stdout);
         println!("--back side--");
         move_far_left(stdout);
-        let back_text = read_user_input(stdout);
 
-        if back_text == "q" {
-            return;
-        }
+        let back_text = match read_user_input(stdout) {
+            Some(text) => text,
+            None => return,
+        };
 
         let mut card = Card::new_simple(front_text, back_text);
 
@@ -150,11 +140,7 @@ pub fn add_cards(stdout: &mut Stdout, category: Category, finished: bool) {
 }
 
 pub fn review_pending_cards(stdout: &mut Stdout, category: Category) {
-    let categories = if category.is_root() {
-        Category::load_all().unwrap()
-    } else {
-        vec![category]
-    };
+    let categories = category.get_following_categories();
 
     for category in categories {
         let cards = get_pending_cards_from_category(&category);
@@ -252,11 +238,7 @@ fn rev_cards(stdout: &mut Stdout, mut cards: Vec<Card>, category: &Category) -> 
 }
 
 pub fn review_cards(stdout: &mut Stdout, category: Category) {
-    let categories = if category.is_root() {
-        Category::load_all().unwrap()
-    } else {
-        vec![category]
-    };
+    let categories = category.get_following_categories();
 
     for category in categories {
         let cards = get_review_cards_from_category(&category);
@@ -312,6 +294,69 @@ pub fn draw_message(stdout: &mut Stdout, message: &str) -> KeyCode {
     execute!(stdout, Clear(ClearType::All)).unwrap();
 
     pressed_char
+}
+
+fn choose_folder(stdout: &mut Stdout, optional: bool) -> Option<Category> {
+    let mut folders = Category::load_all().unwrap();
+    Category::sort_categories(&mut folders);
+
+    let mut items: Vec<String> = folders
+        .clone()
+        .into_iter()
+        .map(|cat| cat.print_it_with_depth())
+        .collect();
+
+    let mut selected = 0;
+    loop {
+        execute!(stdout, Clear(ClearType::All)).unwrap();
+
+        for (index, item) in items.iter().enumerate() {
+            execute!(stdout, MoveTo(0, index as u16)).unwrap();
+
+            if index == selected {
+                execute!(stdout, SetForegroundColor(crossterm::style::Color::Blue)).unwrap();
+                println!("> {}", item);
+                execute!(stdout, ResetColor).unwrap();
+            } else {
+                println!("  {}", item);
+            }
+        }
+
+        // Await input from user
+        if let Event::Key(event) = read().unwrap() {
+            match event.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    selected = selected.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if selected < items.len() - 1 {
+                        selected += 1;
+                    }
+                }
+                KeyCode::Char('n') => {
+                    if let Some(folder_name) = read_user_input(stdout) {
+                        let selected_category = folders[selected].clone();
+                        let new_category = selected_category._append(&folder_name);
+                        new_category.create();
+                        folders = Category::load_all().unwrap();
+                        Category::sort_categories(&mut folders);
+                        items = folders
+                            .clone()
+                            .into_iter()
+                            .map(|cat| cat.print_it_with_depth())
+                            .collect();
+                    }
+                }
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    execute!(stdout, Clear(ClearType::All)).unwrap();
+                    execute!(stdout, MoveTo(0, items.len() as u16 + 1)).unwrap();
+                    return Some(folders[selected].clone());
+                }
+                KeyCode::Char('q') | KeyCode::Esc if optional => return None,
+                _ => {}
+            }
+        }
+    }
 }
 
 fn draw_menu(stdout: &mut Stdout, items: &[&str], optional: bool) -> Option<usize> {

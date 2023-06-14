@@ -1,6 +1,6 @@
 use crate::card::{Card, CardWithFileData};
 use crate::folders::get_cards_from_category;
-use crate::{paths::get_cards_path};
+use crate::paths::get_cards_path;
 use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::Path;
@@ -25,6 +25,19 @@ impl Category {
             let b_str = b.0.join("/");
             a_str.cmp(&b_str)
         });
+    }
+    pub fn get_following_categories(&self) -> Vec<Self> {
+        let categories = Category::load_all().unwrap();
+        let catlen = self.0.len();
+        categories
+            .into_iter()
+            .filter(|cat| cat.0.len() >= catlen && cat.0[0..catlen] == self.0[0..catlen])
+            .collect()
+    }
+
+    pub fn create(&self) {
+        let path = self.as_path();
+        std::fs::create_dir_all(path).unwrap();
     }
 
     pub fn get_containing_cards(&self) -> Vec<Card> {
