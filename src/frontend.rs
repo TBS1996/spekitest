@@ -6,10 +6,7 @@ use crate::card::Card;
 use crate::categories::Category;
 use crate::common::open_file_with_vim;
 use crate::config::Config;
-use crate::folders::{
-    get_path_from_id, get_pending_cards_from_category, get_review_cards_from_category,
-    open_share_path_in_explorer,
-};
+use crate::folders::{get_path_from_id, open_share_path_in_explorer};
 use crate::git::git_save;
 
 pub fn run(config: Config) {
@@ -144,7 +141,7 @@ pub fn review_pending_cards(stdout: &mut Stdout, category: Category) {
     let categories = category.get_following_categories();
 
     for category in categories {
-        let cards = get_pending_cards_from_category(&category);
+        let cards = category.get_pending_cards();
         if rev_cards(stdout, cards, &category) {
             return;
         }
@@ -242,7 +239,7 @@ pub fn review_cards(stdout: &mut Stdout, category: Category) {
     let categories = category.get_following_categories();
 
     for category in categories {
-        let cards = get_review_cards_from_category(&category);
+        let cards = category.get_review_cards();
         if rev_cards(stdout, cards, &category) {
             return;
         }

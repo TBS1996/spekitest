@@ -164,31 +164,3 @@ pub fn _get_all_cards_ids() -> Vec<Id> {
     }
     cards
 }
-
-pub fn get_pending_cards_from_category(category: &Category) -> Vec<Card> {
-    let cards = get_cards_from_category(category);
-    let cards = CardWithFileData::into_cards(cards);
-    cards
-        .into_iter()
-        .filter(|card| card.meta.stability.is_none() && !card.meta.suspended)
-        .collect()
-}
-
-pub fn get_review_cards_from_category(category: &Category) -> Vec<Card> {
-    let cards = get_cards_from_category(category);
-    let cards = CardWithFileData::into_cards(cards);
-    cards
-        .into_iter()
-        .filter(|card| card.is_ready_for_review())
-        .collect()
-}
-
-pub fn get_category_from_id_from_fs(id: Id) -> Option<Category> {
-    let cards = get_all_cards_full();
-    for card in cards {
-        if card.0.meta.id == id {
-            return Some(card.1.category);
-        }
-    }
-    None
-}

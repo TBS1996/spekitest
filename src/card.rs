@@ -9,7 +9,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::categories::Category;
-use crate::folders::{get_all_cards_full, get_category_from_id_from_fs};
+use crate::folders::get_all_cards_full;
 use crate::media::AudioSource;
 use crate::{common::current_time, Id};
 
@@ -113,7 +113,7 @@ impl Card {
 
     pub fn save_card(self, incoming_category: Option<Category>) {
         let incoming_category = incoming_category
-            .or_else(|| get_category_from_id_from_fs(self.meta.id))
+            .or_else(|| Category::from_id(self.meta.id))
             .unwrap_or(Category(vec![]));
 
         let _id = self.meta.id;

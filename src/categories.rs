@@ -1,12 +1,11 @@
 use crate::card::{Card, CardWithFileData};
-use crate::folders::get_cards_from_category;
+use crate::folders::{get_all_cards_full, get_cards_from_category};
 use crate::paths::get_cards_path;
+use crate::Id;
 use std::fs;
-use std::io::{self, ErrorKind};
+use std::io;
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::Command;
-use std::time::{Duration, SystemTime};
 
 // Represent the category that a card is in, can be nested
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -122,6 +121,34 @@ impl Category {
 
     pub fn is_root(&self) -> bool {
         self.0.is_empty()
+    }
+
+    pub fn get_pending_cards(&self) -> Vec<Card> {
+        let cards = get_cards_from_category(self);
+        let cards = CardWithFileData::into_cards(cards);
+        cards
+            .into_iter()
+            .filter(|card| card.meta.stability.is_none() && !card.meta.suspended)
+            .collect()
+    }
+
+    pub fn get_review_cards(&self) -> Vec<Card> {
+        let cards = get_cards_from_category(self);
+        let cards = CardWithFileData::into_cards(cards);
+        cards
+            .into_iter()
+            .filter(|card| card.is_ready_for_review())
+            .collect()
+    }
+
+    pub fn from_id(id: Id) -> Option<Self> {
+        let cards = get_all_cards_full();
+        for card in cards {
+            if card.0.meta.id == id {
+                return Some(card.1.category);
+            }
+        }
+        None
     }
 }
 
