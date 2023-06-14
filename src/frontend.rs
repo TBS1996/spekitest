@@ -3,7 +3,8 @@
 use std::io::{stdout, Stdout};
 
 use crate::card::Card;
-use crate::common::{open_file_with_vim, Category};
+use crate::categories::Category;
+use crate::common::open_file_with_vim;
 use crate::config::Config;
 use crate::folders::{
     get_path_from_id, get_pending_cards_from_category, get_review_cards_from_category,

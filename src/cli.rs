@@ -3,7 +3,7 @@ use std::error::Error;
 
 use crate::{
     card::{Card, Meta, Side},
-    common::Category,
+    categories::Category,
     media::AudioSource,
     paths::{get_import_csv, get_share_path},
 };

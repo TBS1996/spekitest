@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use uuid::Uuid;
 
-use crate::common::Category;
+use crate::categories::Category;
 use crate::folders::{get_all_cards_full, get_category_from_id_from_fs};
 use crate::media::AudioSource;
 use crate::{common::current_time, Id};

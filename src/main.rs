@@ -9,6 +9,7 @@ use git::git_stuff;
 use uuid::Uuid;
 
 mod card;
+mod categories;
 mod cli;
 mod common;
 mod config;

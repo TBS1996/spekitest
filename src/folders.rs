@@ -5,7 +5,7 @@ use std::time::{Duration, UNIX_EPOCH};
 use uuid::Uuid;
 
 use crate::card::{Card, CardFileData, CardWithFileData};
-use crate::common::Category;
+use crate::categories::Category;
 use crate::paths::get_share_path;
 use crate::Id;
 
