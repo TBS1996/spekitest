@@ -4,14 +4,13 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use uuid::Uuid;
 
-use crate::card::{Card, CardFileData, CardWithFileData};
+use crate::card::{AnnoCard, Card, CardFileData};
 use crate::categories::Category;
-use crate::paths::get_share_path;
+use crate::paths::get_cards_path;
 use crate::Id;
 
-pub fn open_share_path_in_explorer() -> std::io::Result<()> {
-    let path = get_share_path();
-    open_folder_in_explorer(path.as_path())
+pub fn view_cards_in_explorer() {
+    open_folder_in_explorer(&get_cards_path()).unwrap()
 }
 
 fn open_folder_in_explorer(path: &Path) -> std::io::Result<()> {
@@ -51,7 +50,7 @@ pub fn get_card_from_id(id: Id, category: &Category) -> Option<Card> {
         let path = entry.path();
 
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("toml") {
-            let card = Card::parse_toml_to_card(path.as_path()).unwrap();
+            let card = AnnoCard::from_path(path.as_path()).into_card();
             if card.meta.id == id {
                 return Some(card);
             }
@@ -68,7 +67,7 @@ pub fn get_path_from_id(id: Id, category: &Category) -> Option<PathBuf> {
         let path = entry.path();
 
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("toml") {
-            let card = Card::parse_toml_to_card(path.as_path()).unwrap();
+            let card = AnnoCard::from_path(path.as_path()).into_card();
             if card.meta.id == id {
                 return Some(path);
             }
@@ -77,7 +76,7 @@ pub fn get_path_from_id(id: Id, category: &Category) -> Option<PathBuf> {
     None
 }
 
-pub fn get_cards_from_category(category: &Category) -> Vec<CardWithFileData> {
+pub fn get_cards_from_category(category: &Category) -> Vec<AnnoCard> {
     let directory = category.as_path();
     let mut cards = Vec::new();
 
@@ -86,8 +85,8 @@ pub fn get_cards_from_category(category: &Category) -> Vec<CardWithFileData> {
         let path = entry.path();
 
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("toml") {
-            let card = Card::parse_toml_to_card(path.as_path()).unwrap();
-            let full_card = CardWithFileData(
+            let card = AnnoCard::from_path(path.as_path()).into_card();
+            let full_card = AnnoCard(
                 card,
                 CardFileData {
                     file_name: path.file_name().unwrap().to_string_lossy().to_string(),
@@ -125,14 +124,14 @@ pub fn get_size_from_id(id: Id) -> u64 {
 }
 */
 
-pub fn _get_all_unfinished_cards() -> Vec<Card> {
+pub fn _get_all_unfinished_cards() -> Vec<AnnoCard> {
     get_all_cards()
         .into_iter()
-        .filter(|card| card.meta.suspended)
+        .filter(|card| card.0.is_ready_for_unfinished_review())
         .collect()
 }
 
-pub fn get_all_cards_full() -> Vec<CardWithFileData> {
+pub fn get_all_cards_full() -> Vec<AnnoCard> {
     let cats = Category::load_all().unwrap();
     let mut cards = vec![];
 
@@ -143,24 +142,13 @@ pub fn get_all_cards_full() -> Vec<CardWithFileData> {
     cards
 }
 
-pub fn get_all_cards() -> Vec<Card> {
+pub fn get_all_cards() -> Vec<AnnoCard> {
     let cats = Category::load_all().unwrap();
     let mut cards = vec![];
 
     for cat in &cats {
         let some_cards = get_cards_from_category(cat);
-        let some_cards = CardWithFileData::into_cards(some_cards);
         cards.extend(some_cards);
-    }
-    cards
-}
-
-pub fn _get_all_cards_ids() -> Vec<Id> {
-    let cats = Category::load_all().unwrap();
-    let mut cards = vec![];
-
-    for cat in &cats {
-        cards.extend(_get_card_ids_from_category(cat));
     }
     cards
 }

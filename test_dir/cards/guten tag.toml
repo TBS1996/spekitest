@@ -1,0 +1,19 @@
+[front]
+text = "guten tag"
+
+[back]
+text = "whats up"
+
+[meta]
+id = "6f9c5986-016c-4267-8591-ed5952c88b2d"
+dependencies = []
+dependents = []
+suspended = false
+finished = true
+stability = 2.0
+tags = []
+
+[[history]]
+timestamp = 1686655380
+grade = "some"
+time_spent = 0

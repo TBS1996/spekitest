@@ -4,23 +4,44 @@ use std::{
     path::PathBuf,
 };
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::paths::get_share_path;
+use crate::{common::open_file_with_vim, paths::get_share_path};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 
 pub struct Config {
-    play_audio: bool,
-    show_images: bool,
-    download_media: bool,
-    git_remote: Option<String>,
-    gpt_key: Option<String>,
+    pub play_audio: bool,
+    pub show_images: bool,
+    pub download_media: bool,
+    #[serde(
+        serialize_with = "option_string_to_empty_string",
+        deserialize_with = "empty_string_to_option"
+    )]
+    pub git_remote: Option<String>,
+    #[serde(
+        serialize_with = "option_string_to_empty_string",
+        deserialize_with = "empty_string_to_option"
+    )]
+    pub gpt_key: Option<String>,
 }
 
 impl Config {
+    fn _config_path() -> PathBuf {
+        dirs::home_dir()
+            .unwrap()
+            .join(".config")
+            .join("speki")
+            .join("config.toml")
+    }
+
     fn config_path() -> PathBuf {
         get_share_path().join("config.toml")
+    }
+
+    pub fn edit_with_vim() -> Self {
+        open_file_with_vim(Self::config_path().as_path()).unwrap();
+        Self::load().unwrap()
     }
 
     pub fn read_git_remote(&self) -> &Option<String> {
@@ -79,5 +100,37 @@ impl Default for Config {
             git_remote: None,
             gpt_key: None,
         }
+    }
+}
+
+fn option_string_to_empty_string<S>(
+    value: &Option<String>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match value {
+        Some(v) => serializer.serialize_str(v),
+        None => serializer.serialize_str(""),
+    }
+}
+
+fn empty_string_to_option<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: String = Deserialize::deserialize(deserializer)?;
+    Ok(if s.is_empty() { None } else { Some(s) })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn foo() {
+        let x = Config::config_path();
+        dbg!(x);
     }
 }

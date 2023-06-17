@@ -1,6 +1,6 @@
-use crate::card::{Card, CardWithFileData};
+use crate::card::AnnoCard;
 use crate::folders::{get_all_cards_full, get_cards_from_category};
-use crate::paths::get_cards_path;
+use crate::paths::{self, get_cards_path};
 use crate::Id;
 use std::fs;
 use std::io;
@@ -12,6 +12,24 @@ use std::path::PathBuf;
 pub struct Category(pub Vec<String>);
 
 impl Category {
+    pub fn from_card_path(path: &Path) -> Self {
+        let without_prefix = path.strip_prefix(paths::get_cards_path()).unwrap();
+        let folder = without_prefix.parent().unwrap();
+
+        let components: Vec<String> = Path::new(folder)
+            .components()
+            .filter_map(|component| component.as_os_str().to_str().map(String::from))
+            .collect();
+
+        let categories = Self(components);
+
+        if categories.as_path().exists() {
+            categories
+        } else {
+            panic!();
+        }
+    }
+
     pub fn sort_categories(categories: &mut [Category]) {
         categories.sort_by(|a, b| {
             let a_str = a.0.join("/");
@@ -31,10 +49,6 @@ impl Category {
     pub fn create(&self) {
         let path = self.as_path();
         std::fs::create_dir_all(path).unwrap();
-    }
-
-    pub fn get_containing_cards(&self) -> Vec<Card> {
-        CardWithFileData::into_cards(get_cards_from_category(self))
     }
 
     pub fn print_it(&self) -> String {
@@ -96,18 +110,6 @@ impl Category {
         self.0.join("/")
     }
 
-    pub fn _from_card_path(path: &Path) -> Self {
-        let root = get_cards_path();
-        let path = path.strip_prefix(root).unwrap();
-
-        let mut x = path
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy().into_owned())
-            .collect::<Vec<String>>();
-        x.pop();
-        Category(x)
-    }
-
     pub fn from_string(s: String) -> Self {
         let vec = s.split('/').map(|s| s.to_string()).collect();
         Self(vec)
@@ -123,21 +125,26 @@ impl Category {
         self.0.is_empty()
     }
 
-    pub fn get_pending_cards(&self) -> Vec<Card> {
-        let cards = get_cards_from_category(self);
-        let cards = CardWithFileData::into_cards(cards);
-        cards
+    pub fn get_unfinished_cards(&self) -> Vec<AnnoCard> {
+        get_cards_from_category(self)
             .into_iter()
-            .filter(|card| card.meta.stability.is_none() && !card.meta.suspended)
+            .filter(|card| card.card_as_ref().is_ready_for_unfinished_review())
             .collect()
     }
 
-    pub fn get_review_cards(&self) -> Vec<Card> {
+    pub fn get_pending_cards(&self) -> Vec<AnnoCard> {
         let cards = get_cards_from_category(self);
-        let cards = CardWithFileData::into_cards(cards);
         cards
             .into_iter()
-            .filter(|card| card.is_ready_for_review())
+            .filter(|card| card.card_as_ref().is_ready_for_pending_review())
+            .collect()
+    }
+
+    pub fn get_review_cards(&self) -> Vec<AnnoCard> {
+        let cards = get_cards_from_category(self);
+        cards
+            .into_iter()
+            .filter(|card| card.card_as_ref().is_ready_for_review())
             .collect()
     }
 
@@ -173,6 +180,15 @@ mod tests {
         let category = Category(vec!["foo".into(), "bar".into()]);
         let joined = category.joined();
         insta::assert_debug_snapshot!(joined);
+    }
+
+    #[test]
+    fn test_as_card_path() {
+        let cards_path = paths::get_cards_path()
+            .join("foo")
+            .join("bar")
+            .join("guten tag.toml");
+        Category::from_card_path(cards_path.as_path());
     }
 
     /*

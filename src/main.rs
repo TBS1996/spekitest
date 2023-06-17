@@ -53,8 +53,7 @@ fn main() {
     read_csv().unwrap();
 
     let config = Config::load().unwrap();
-    let config_clone = config.clone();
-    std::thread::spawn(move || git_stuff(config_clone.read_git_remote()));
+    std::thread::spawn(move || git_stuff(config.read_git_remote()));
 
-    run(config);
+    run();
 }

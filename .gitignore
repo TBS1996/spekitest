@@ -1,3 +1,5 @@
 /target
 cache.db
 /cards
+.DS_Store
+test_dir/.DS_Store

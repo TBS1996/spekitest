@@ -3,7 +3,7 @@ use std::{fs::File, io::BufReader, path::PathBuf};
 use rodio::Source;
 use serde::{Deserialize, Serialize};
 
-use crate::paths::get_media_path;
+use crate::{config::Config, paths::get_media_path};
 
 #[derive(Deserialize, Clone, Serialize, Debug, Default)]
 pub struct AudioSource {
@@ -24,6 +24,10 @@ impl AudioSource {
     }
 
     pub fn play_audio(&mut self) -> Option<std::thread::JoinHandle<()>> {
+        if !Config::load().ok()?.play_audio {
+            return None;
+        }
+
         let path = self.get_path()?;
 
         let handle = std::thread::spawn(move || {

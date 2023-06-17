@@ -1,8 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::ffi::OsStr;
-use std::fs;
 use std::fs::read_to_string;
-use std::io::{self};
 use std::path::{Path, PathBuf};
 
 use std::time::Duration;
@@ -13,33 +10,106 @@ use crate::folders::get_all_cards_full;
 use crate::media::AudioSource;
 use crate::{common::current_time, Id};
 
+pub struct CardPath(PathBuf);
+
+impl CardPath {
+    fn from_path(path: &Path) -> Self {
+        let _ = AnnoCard::from_path(path);
+        Self(PathBuf::from(path))
+    }
+}
+
+#[derive(Clone)]
 pub struct CardFileData {
     pub file_name: String,
     pub category: Category,
     pub last_modified: Duration,
 }
 
-pub struct CardWithFileData(pub Card, pub CardFileData);
+impl CardFileData {
+    pub fn from_path(path: &Path) -> Self {
+        let file_name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let category = Category::from_card_path(path);
+        let last_modified = {
+            let system_time = std::fs::metadata(path).unwrap().modified().unwrap();
+            system_time_as_unix_time(system_time)
+        };
 
-impl CardWithFileData {
+        Self {
+            file_name,
+            category,
+            last_modified,
+        }
+    }
+
+    pub fn as_path(&self) -> PathBuf {
+        let mut path = self.category.as_path().join(&self.file_name);
+        path.set_extension("toml");
+        path
+    }
+}
+
+#[derive(Clone)]
+pub struct AnnoCard(pub Card, pub CardFileData);
+
+impl AnnoCard {
     pub fn get_full_card_from_id(id: Id) -> Option<Self> {
         let cards = get_all_cards_full();
 
         cards.into_iter().find(|card| card.0.meta.id == id)
     }
 
+    pub fn edit_with_vim(&self) -> Self {
+        let path = self.full_path();
+        open_file_with_vim(path.as_path()).unwrap();
+        Self::from_path(path.as_path())
+    }
+
+    pub fn from_path(path: &Path) -> Self {
+        let content = read_to_string(path).expect("Could not read the TOML file");
+        let card: Card = toml::from_str(&content).unwrap();
+        let file_data = CardFileData::from_path(path);
+        Self(card, file_data)
+    }
+
     pub fn into_card(self) -> Card {
         self.0
     }
 
-    pub fn into_cards(v: Vec<Self>) -> Vec<Card> {
-        v.into_iter().map(|c| c.into_card()).collect()
+    pub fn card_as_ref(&self) -> &Card {
+        &self.0
+    }
+
+    pub fn card_as_mut_ref(&mut self) -> &mut Card {
+        &mut self.0
     }
 
     pub fn full_path(&self) -> PathBuf {
         let mut path = self.1.category.as_path().join(self.1.file_name.clone());
         path.set_extension("toml");
         path
+    }
+
+    pub fn update_card(&self) -> Self {
+        let path = self.1.as_path();
+        if !path.exists() {
+            let msg = format!("following path doesn't really exist: {}", path.display());
+            panic!("{msg}");
+        }
+
+        let toml = toml::to_string(self.card_as_ref()).unwrap();
+
+        std::fs::write(&path, toml).unwrap();
+
+        AnnoCard::from_path(path.as_path())
+    }
+
+    pub fn new_review(&mut self, grade: Grade) -> Self {
+        let review = Review::new(grade.clone());
+        let time_passed = self.0.time_passed_since_last_review();
+        self.0.history.push(review);
+        self.0.meta.stability = Some(Card::new_stability(grade, time_passed));
+        self.update_card()
     }
 }
 
@@ -94,6 +164,14 @@ impl Card {
         Some((current_unix - last_unix).as_secs_f32() / 86400.)
     }
 
+    pub fn is_ready_for_pending_review(&self) -> bool {
+        self.meta.stability.is_none() && !self.meta.suspended
+    }
+
+    pub fn is_ready_for_unfinished_review(&self) -> bool {
+        !self.meta.finished && !self.meta.suspended
+    }
+
     pub fn is_ready_for_review(&self) -> bool {
         match (self.meta.stability, self.days_since_last_review()) {
             (Some(stability), Some(last_review_time)) => {
@@ -106,22 +184,7 @@ impl Card {
         }
     }
 
-    pub fn load_from_id(id: Id) -> Option<Self> {
-        let card = CardWithFileData::get_full_card_from_id(id)?;
-        Some(card.into_card())
-    }
-
-    pub fn save_card(self, incoming_category: Option<Category>) {
-        let incoming_category = incoming_category
-            .or_else(|| Category::from_id(self.meta.id))
-            .unwrap_or(Category(vec![]));
-
-        let _id = self.meta.id;
-
-        self.save_card_to_toml(&incoming_category).unwrap();
-    }
-
-    pub fn save_card_to_toml(&self, category: &Category) -> Result<PathBuf, toml::ser::Error> {
+    pub fn save_new_card(self, category: &Category) -> AnnoCard {
         let toml = toml::to_string(&self).unwrap();
         std::fs::create_dir_all(category.as_path()).unwrap();
         let path = category
@@ -129,50 +192,9 @@ impl Card {
             .join(self.front.text.clone())
             .with_extension("toml");
 
-        let _ = std::fs::write(&path, toml);
-        Ok(path)
-    }
+        std::fs::write(&path, toml).unwrap();
 
-    // The closure takes a Card and returns a Result.
-    // This allows it to handle errors that might occur during processing.
-    pub fn _process_cards<F>(dir: &Path, func: &mut F) -> io::Result<()>
-    where
-        F: FnMut(Card, &Category) -> io::Result<()>,
-    {
-        if dir.is_dir() {
-            let entries = fs::read_dir(dir)?;
-            for entry in entries {
-                let entry = entry?;
-                let path = entry.path();
-                if path.is_dir() {
-                    Self::_process_cards(&path, func)?;
-                } else if path.extension() == Some(OsStr::new("toml")) {
-                    let card = Self::parse_toml_to_card(&path).unwrap(); // Assuming parse_toml_to_card returns Result<Card, io::Error>
-                    let category = Category::_from_card_path(&path);
-                    func(card, &category)?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub fn _create_new(front: &str, back: &str, category: &Category) -> Id {
-        let card = Card {
-            front: Side {
-                text: front.into(),
-                ..Default::default()
-            },
-            back: Side {
-                text: back.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let id = card.meta.id;
-
-        card.save_card_to_toml(category).unwrap();
-        id
+        AnnoCard::from_path(path.as_path())
     }
 
     fn new_stability(grade: Grade, time_passed: Option<Duration>) -> f32 {
@@ -185,21 +207,6 @@ impl Card {
 
     fn time_passed_since_last_review(&self) -> Option<Duration> {
         Some(current_time() - self.history.last()?.timestamp)
-    }
-
-    pub fn new_review(&mut self, grade: Grade, category: &Category) {
-        let review = Review::new(grade.clone());
-        let time_passed = self.time_passed_since_last_review();
-        self.history.push(review);
-        self.meta.stability = Some(Self::new_stability(grade, time_passed));
-        self.save_card_to_toml(category).unwrap();
-    }
-
-    pub fn parse_toml_to_card(file_path: &Path) -> Result<Card, toml::de::Error> {
-        let content = read_to_string(file_path).expect("Could not read the TOML file");
-        let mut card: Card = toml::from_str(&content)?;
-        card.history.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-        Ok(card)
     }
 }
 
@@ -242,7 +249,7 @@ impl std::str::FromStr for Grade {
     }
 }
 
-use crate::common::serde_duration_as_secs;
+use crate::common::{open_file_with_vim, serde_duration_as_secs, system_time_as_unix_time};
 
 #[derive(Deserialize, Clone, Serialize, Debug, Default)]
 pub struct Review {
@@ -312,16 +319,6 @@ mod tests {
 
         //let cards = Card::load_cards_from_folder(&category);
         //insta::assert_debug_snapshot!(cards);
-    }
-
-    #[test]
-    fn test_card_roundtrip() {
-        let mut card = Card::default();
-        card.meta.id = uuid!("000a0a00-c943-4c4b-b7bf-f7d483208eb0");
-        let category = Category(vec![]);
-        let path = card.save_card_to_toml(&category).unwrap();
-        let card = Card::parse_toml_to_card(path.as_path());
-        insta::assert_debug_snapshot!(card);
     }
 
     #[test]

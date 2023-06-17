@@ -1,16 +1,15 @@
-
-
-
-
 use std::io::{self, ErrorKind};
 
-use std::path::PathBuf;
+use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, SystemTime};
 
 pub fn current_time() -> Duration {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
+    system_time_as_unix_time(SystemTime::now())
+}
+
+pub fn system_time_as_unix_time(time: SystemTime) -> Duration {
+    time.duration_since(SystemTime::UNIX_EPOCH)
         .expect("Time went backwards")
 }
 
@@ -35,7 +34,7 @@ pub mod serde_duration_as_secs {
     }
 }
 
-pub fn open_file_with_vim(path: PathBuf) -> io::Result<()> {
+pub fn open_file_with_vim(path: &Path) -> io::Result<()> {
     let status = Command::new("vim").arg(path).status()?;
 
     if status.success() {

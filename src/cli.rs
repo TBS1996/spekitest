@@ -57,8 +57,7 @@ pub fn read_csv() -> Result<(), Box<dyn Error>> {
         };
 
         let card = Card::new(front_side, back_side, Meta::default());
-        card.save_card_to_toml(&Category::import_category())
-            .unwrap();
+        card.save_new_card(&Category::import_category());
     }
 
     std::fs::rename(get_import_csv(), get_share_path().join("imported.csv")).unwrap();

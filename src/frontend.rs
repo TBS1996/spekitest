@@ -2,14 +2,14 @@
 
 use std::io::{stdout, Stdout};
 
-use crate::card::Card;
+use crate::card::{AnnoCard, Card};
 use crate::categories::Category;
 use crate::common::open_file_with_vim;
 use crate::config::Config;
-use crate::folders::{get_path_from_id, open_share_path_in_explorer};
+use crate::folders::{get_path_from_id, view_cards_in_explorer};
 use crate::git::git_save;
 
-pub fn run(config: Config) {
+pub fn run() {
     enable_raw_mode().unwrap();
     let mut stdout = stdout();
     execute!(stdout, Hide).unwrap();
@@ -18,7 +18,9 @@ pub fn run(config: Config) {
         "Add new cards",
         "Review cards",
         "Review pending cards",
-        "Open in file explorer",
+        "Review unfinished cards",
+        "View cards",
+        "Settings",
     ];
 
     while let Some(choice) = draw_menu(&mut stdout, &menu_items, true) {
@@ -28,8 +30,9 @@ pub fn run(config: Config) {
                     Some(category) => category,
                     None => continue,
                 };
-                add_cards(&mut stdout, category, true);
-                let has_remote = config.read_git_remote().is_some();
+
+                add_cards(&mut stdout, category);
+                let has_remote = Config::load().unwrap().git_remote.is_some();
                 let _ = std::thread::spawn(move || git_save(has_remote));
             }
             1 => {
@@ -38,7 +41,7 @@ pub fn run(config: Config) {
                     None => continue,
                 };
                 review_cards(&mut stdout, category);
-                let has_remote = config.read_git_remote().is_some();
+                let has_remote = Config::load().unwrap().git_remote.is_some();
                 let _ = std::thread::spawn(move || git_save(has_remote));
             }
             2 => {
@@ -47,24 +50,39 @@ pub fn run(config: Config) {
                     None => continue,
                 };
                 review_pending_cards(&mut stdout, category);
-                let has_remote = config.read_git_remote().is_some();
+                let has_remote = Config::load().unwrap().git_remote.is_some();
                 let _ = std::thread::spawn(move || git_save(has_remote));
             }
-            3 => open_share_path_in_explorer().unwrap(),
+            3 => {
+                let category = match choose_folder(&mut stdout, true) {
+                    Some(category) => category,
+                    None => continue,
+                };
+                review_unfinished_cards(&mut stdout, category);
+                let has_remote = Config::load().unwrap().git_remote.is_some();
+                let _ = std::thread::spawn(move || git_save(has_remote));
+            }
+            4 => view_cards_in_explorer(),
+            5 => {
+                let _ = Config::edit_with_vim();
+            }
             _ => {}
         };
     }
+    execute!(stdout, Clear(ClearType::All)).unwrap();
     execute!(stdout, Show).unwrap();
     disable_raw_mode().unwrap();
 }
 
 use std::io::Write;
 
-pub fn read_user_input(stdout: &mut Stdout) -> Option<String> {
+pub fn read_user_input(stdout: &mut Stdout) -> Option<(String, KeyCode)> {
     let mut input = String::new();
+    let mut key_code;
 
     loop {
         if let Event::Key(event) = read().unwrap() {
+            key_code = event.code;
             match event.code {
                 KeyCode::Char(c) => {
                     input.push(c);
@@ -85,12 +103,14 @@ pub fn read_user_input(stdout: &mut Stdout) -> Option<String> {
                     stdout.flush().unwrap();
                 }
                 KeyCode::Enter => break,
+                KeyCode::Tab => break,
                 KeyCode::Esc => return None,
+                KeyCode::F(1) => break,
                 _ => {}
             }
         }
     }
-    Some(input)
+    Some((input, key_code))
 }
 
 fn move_far_left(stdout: &mut Stdout) {
@@ -106,35 +126,88 @@ fn update_status_bar(stdout: &mut Stdout, msg: &str) {
     execute!(stdout, cursor::MoveTo(pre_pos.0, pre_pos.1)).unwrap();
 }
 
-pub fn add_cards(stdout: &mut Stdout, category: Category, finished: bool) {
+pub fn add_cards(stdout: &mut Stdout, mut category: Category) {
     loop {
         execute!(stdout, Clear(ClearType::All)).unwrap();
         execute!(stdout, MoveTo(0, 1)).unwrap();
         update_status_bar(stdout, "--front side--");
+        let mut key_code;
 
-        let front_text = match read_user_input(stdout) {
-            Some(text) => text,
+        let (front_text, code) = match read_user_input(stdout) {
+            Some((text, code)) => (text, code),
             None => return,
         };
 
-        execute!(stdout, MoveDown(2)).unwrap();
-        move_far_left(stdout);
-        println!("--back side--");
-        move_far_left(stdout);
+        if code == KeyCode::F(1) {
+            category = match choose_folder(stdout, true) {
+                Some(category) => category,
+                None => continue,
+            };
+            continue;
+        }
 
-        let back_text = match read_user_input(stdout) {
-            Some(text) => text,
-            None => return,
+        key_code = code;
+
+        let back_text = if key_code != KeyCode::Tab {
+            execute!(stdout, MoveDown(2)).unwrap();
+            move_far_left(stdout);
+            println!("--back side--");
+            move_far_left(stdout);
+
+            let (back_text, code) = match read_user_input(stdout) {
+                Some((text, code)) => (text, code),
+                None => return,
+            };
+
+            key_code = code;
+
+            back_text
+        } else {
+            String::new()
         };
 
         let mut card = Card::new_simple(front_text, back_text);
 
-        if !finished {
+        if key_code == KeyCode::Tab {
             card.meta.finished = false;
         }
 
-        card.save_card(Some(category.clone()));
+        card.save_new_card(&category);
     }
+}
+
+pub fn review_unfinished_cards(stdout: &mut Stdout, category: Category) {
+    let categories = category.get_following_categories();
+
+    for category in categories {
+        let mut cards = category.get_unfinished_cards();
+
+        for card in cards.iter_mut() {
+            let get_message = |card: &AnnoCard| {
+                format!(
+                    "{}\n-------------------\n{}",
+                    card.0.front.text, card.0.back.text
+                )
+            };
+
+            loop {
+                match draw_message(stdout, &get_message(card)) {
+                    KeyCode::Char('f') => {
+                        card.0.meta.finished = true;
+                        card.update_card();
+                        break;
+                    }
+                    KeyCode::Char('s') => break,
+                    KeyCode::Char('e') => {
+                        *card = card.edit_with_vim();
+                    }
+                    key if should_exit(&key) => return,
+                    _ => {}
+                }
+            }
+        }
+    }
+    draw_message(stdout, "Nothing left to review!");
 }
 
 pub fn review_pending_cards(stdout: &mut Stdout, category: Category) {
@@ -192,30 +265,29 @@ fn print_card_review_full(stdout: &mut Stdout, card: &mut Card) {
     print_card_review_back(stdout, card, false);
 }
 
-fn rev_cards(stdout: &mut Stdout, mut cards: Vec<Card>, category: &Category) -> bool {
+fn rev_cards(stdout: &mut Stdout, mut cards: Vec<AnnoCard>, category: &Category) -> bool {
     let qty = cards.len();
 
     for (i, card) in cards.iter_mut().enumerate() {
         execute!(stdout, Clear(ClearType::All)).unwrap();
         update_card_review_status(stdout, i, qty, category);
-        print_card_review_front(stdout, card, true);
+        print_card_review_front(stdout, card.card_as_mut_ref(), true);
 
         if should_exit(&get_keycode()) {
             return false;
         }
 
-        print_card_review_back(stdout, card, true);
+        print_card_review_back(stdout, card.card_as_mut_ref(), true);
         loop {
             match get_char() {
                 'q' => return false,
                 'e' => {
-                    open_file_with_vim(get_path_from_id(card.meta.id, category).unwrap()).unwrap();
-                    *card = Card::load_from_id(card.meta.id).unwrap();
-                    print_card_review_full(stdout, card);
+                    *card = card.edit_with_vim();
+                    print_card_review_full(stdout, card.card_as_mut_ref());
                 }
                 'j' => {
-                    card.meta.suspended = true;
-                    card.clone().save_card(Some(category.to_owned()));
+                    card.0.meta.suspended = true;
+                    card.update_card();
                     draw_message(stdout, "card suspended");
                     break;
                 }
@@ -224,7 +296,7 @@ fn rev_cards(stdout: &mut Stdout, mut cards: Vec<Card>, category: &Category) -> 
 
                 c => match c.to_string().parse() {
                     Ok(grade) => {
-                        card.new_review(grade, category);
+                        *card = card.new_review(grade);
                         break;
                     }
                     _ => continue,
@@ -334,7 +406,7 @@ fn choose_folder(stdout: &mut Stdout, optional: bool) -> Option<Category> {
                 KeyCode::Char('n') => {
                     if let Some(folder_name) = read_user_input(stdout) {
                         let selected_category = folders[selected].clone();
-                        let new_category = selected_category._append(&folder_name);
+                        let new_category = selected_category._append(&folder_name.0);
                         new_category.create();
                         folders = Category::load_all().unwrap();
                         Category::sort_categories(&mut folders);
