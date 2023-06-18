@@ -52,6 +52,12 @@ impl CardFileData {
 #[derive(Clone)]
 pub struct AnnoCard(pub Card, pub CardFileData);
 
+impl From<AnnoCard> for Card {
+    fn from(value: AnnoCard) -> Self {
+        value.0
+    }
+}
+
 impl AnnoCard {
     pub fn get_full_card_from_id(id: Id) -> Option<Self> {
         let cards = get_all_cards_full();
@@ -104,6 +110,10 @@ impl AnnoCard {
         AnnoCard::from_path(path.as_path())
     }
 
+    pub fn refresh_card(&mut self) {
+        *self = Self::from_path(&self.1.as_path())
+    }
+
     pub fn new_review(&mut self, grade: Grade) -> Self {
         let review = Review::new(grade.clone());
         let time_passed = self.0.time_passed_since_last_review();
@@ -148,36 +158,37 @@ impl Card {
     }
 
     pub fn recall_rate(&self) -> Option<f32> {
-        let days_passed = self.days_since_last_review()?;
+        let days_passed = self.time_since_last_review()?;
         let stability = self.meta.stability?;
         Some(Self::calculate_strength(days_passed, stability))
     }
 
-    fn calculate_strength(days_passed: f32, stability: f32) -> f32 {
+    fn calculate_strength(days_passed: Duration, stability: Duration) -> f32 {
         let base: f32 = 0.9;
-        (base.ln() * days_passed / stability).exp()
+        let ratio = days_passed.as_secs_f32() / stability.as_secs_f32();
+        (base.ln() * ratio).exp()
     }
 
-    pub fn days_since_last_review(&self) -> Option<f32> {
+    pub fn time_since_last_review(&self) -> Option<Duration> {
         let last_unix = self.history.last()?.timestamp;
         let current_unix = current_time();
-        Some((current_unix - last_unix).as_secs_f32() / 86400.)
+        current_unix.checked_sub(last_unix)
     }
 
-    pub fn is_ready_for_pending_review(&self) -> bool {
-        self.meta.stability.is_none() && !self.meta.suspended
+    pub fn pending_filter(&self) -> bool {
+        self.meta.stability.is_none() && !self.meta.suspended && self.meta.finished
     }
 
-    pub fn is_ready_for_unfinished_review(&self) -> bool {
+    pub fn unfinished_filter(&self) -> bool {
         !self.meta.finished && !self.meta.suspended
     }
 
-    pub fn is_ready_for_review(&self) -> bool {
-        match (self.meta.stability, self.days_since_last_review()) {
+    pub fn review_filter(&self) -> bool {
+        match (self.meta.stability, self.time_since_last_review()) {
             (Some(stability), Some(last_review_time)) => {
                 self.meta.finished
                     && !self.meta.suspended
-                    && last_review_time > (1. / 1440.) // Lets not review if its less than a minute since last time
+                    && last_review_time > Duration::from_secs(60) // Lets not review if its less than a minute since last time
                     && stability < last_review_time
             }
             (_, _) => false,
@@ -189,7 +200,7 @@ impl Card {
         std::fs::create_dir_all(category.as_path()).unwrap();
         let path = category
             .as_path()
-            .join(self.front.text.clone())
+            .join(self.front.text)
             .with_extension("toml");
 
         std::fs::write(&path, toml).unwrap();
@@ -197,12 +208,10 @@ impl Card {
         AnnoCard::from_path(path.as_path())
     }
 
-    fn new_stability(grade: Grade, time_passed: Option<Duration>) -> f32 {
-        grade.get_factor()
-            * (time_passed
-                .unwrap_or(Duration::from_secs_f32(86400.))
-                .as_secs_f32()
-                / 86400.)
+    fn new_stability(grade: Grade, time_passed: Option<Duration>) -> Duration {
+        let grade_factor = grade.get_factor();
+        let time_passed = time_passed.unwrap_or(Duration::from_secs(86400));
+        time_passed.mul_f32(grade_factor)
     }
 
     fn time_passed_since_last_review(&self) -> Option<Duration> {
@@ -289,7 +298,12 @@ pub struct Meta {
     pub dependents: Vec<Id>,
     pub suspended: bool,
     pub finished: bool,
-    pub stability: Option<f32>,
+    #[serde(
+        default,
+        serialize_with = "optional_duration_to_days",
+        deserialize_with = "optional_days_to_duration"
+    )]
+    pub stability: Option<Duration>,
     pub tags: Vec<String>,
 }
 
@@ -307,10 +321,32 @@ impl Default for Meta {
     }
 }
 
+fn optional_duration_to_days<S>(
+    duration: &Option<Duration>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match duration {
+        Some(d) => serializer.serialize_some(&(d.as_secs_f32() / (24.0 * 60.0 * 60.0))),
+        None => serializer.serialize_none(),
+    }
+}
+
+fn optional_days_to_duration<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt: Option<f32> = Option::deserialize(deserializer)?;
+    match opt {
+        Some(f) => Ok(Some(Duration::from_secs_f32(f * 24.0 * 60.0 * 60.0))),
+        None => Ok(None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use uuid::uuid;
-
     use super::*;
 
     #[test]
@@ -323,12 +359,12 @@ mod tests {
 
     #[test]
     fn test_strength() {
-        let stability = 1.0;
-        let days_passed = 0.0;
+        let stability = Duration::from_secs(86400);
+        let days_passed = Duration::default();
         let recall_rate = Card::calculate_strength(days_passed, stability);
         assert_eq!(recall_rate, 1.0);
 
-        let days_passed = 1.;
+        let days_passed = Duration::from_secs(86400);
         let recall_rate = Card::calculate_strength(days_passed, stability);
         assert_eq!(recall_rate, 0.9);
     }

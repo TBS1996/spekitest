@@ -127,7 +127,7 @@ pub fn get_size_from_id(id: Id) -> u64 {
 pub fn _get_all_unfinished_cards() -> Vec<AnnoCard> {
     get_all_cards()
         .into_iter()
-        .filter(|card| card.0.is_ready_for_unfinished_review())
+        .filter(|card| card.0.unfinished_filter())
         .collect()
 }
 

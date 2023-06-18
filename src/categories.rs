@@ -1,7 +1,6 @@
-use crate::card::AnnoCard;
-use crate::folders::{get_all_cards_full, get_cards_from_category};
+use crate::card::{AnnoCard, Card};
+use crate::folders::get_cards_from_category;
 use crate::paths::{self, get_cards_path};
-use crate::Id;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -12,6 +11,9 @@ use std::path::PathBuf;
 pub struct Category(pub Vec<String>);
 
 impl Category {
+    pub fn joined(&self) -> String {
+        self.0.join("/")
+    }
     pub fn from_card_path(path: &Path) -> Self {
         let without_prefix = path.strip_prefix(paths::get_cards_path()).unwrap();
         let folder = without_prefix.parent().unwrap();
@@ -73,6 +75,7 @@ impl Category {
         let mut folders = Vec::new();
         Self::collect_folders_inner(root, root, &mut folders)?;
         folders.push(Category::default());
+        Category::sort_categories(&mut folders);
         Ok(folders)
     }
 
@@ -98,64 +101,43 @@ impl Category {
                         .components()
                         .map(|c| c.as_os_str().to_string_lossy().into_owned())
                         .collect::<Vec<String>>();
-                    folders.push(Self(rel_path));
-                    Self::collect_folders_inner(root, &path, folders)?;
+                    if !rel_path.last().unwrap().starts_with('_') {
+                        folders.push(Self(rel_path));
+                        Self::collect_folders_inner(root, &path, folders)?;
+                    }
                 }
             }
         }
         Ok(())
     }
 
-    pub fn joined(&self) -> String {
-        self.0.join("/")
-    }
-
-    pub fn from_string(s: String) -> Self {
-        let vec = s.split('/').map(|s| s.to_string()).collect();
-        Self(vec)
-    }
-
     pub fn as_path(&self) -> PathBuf {
         let categories = self.0.join("/");
         let path = format!("{}/{}", get_cards_path().to_string_lossy(), categories);
-        PathBuf::from(path)
+        let path = PathBuf::from(path);
+        if !path.exists() {
+            panic!();
+        }
+        path
     }
 
-    pub fn is_root(&self) -> bool {
-        self.0.is_empty()
+    fn get_cards_with_filter(&self, mut filter: Box<dyn FnMut(&Card) -> bool>) -> Vec<AnnoCard> {
+        get_cards_from_category(self)
+            .into_iter()
+            .filter(|card| filter(card.card_as_ref()))
+            .collect()
     }
 
     pub fn get_unfinished_cards(&self) -> Vec<AnnoCard> {
-        get_cards_from_category(self)
-            .into_iter()
-            .filter(|card| card.card_as_ref().is_ready_for_unfinished_review())
-            .collect()
+        self.get_cards_with_filter(Box::new(Card::unfinished_filter))
     }
 
     pub fn get_pending_cards(&self) -> Vec<AnnoCard> {
-        let cards = get_cards_from_category(self);
-        cards
-            .into_iter()
-            .filter(|card| card.card_as_ref().is_ready_for_pending_review())
-            .collect()
+        self.get_cards_with_filter(Box::new(Card::pending_filter))
     }
 
     pub fn get_review_cards(&self) -> Vec<AnnoCard> {
-        let cards = get_cards_from_category(self);
-        cards
-            .into_iter()
-            .filter(|card| card.card_as_ref().is_ready_for_review())
-            .collect()
-    }
-
-    pub fn from_id(id: Id) -> Option<Self> {
-        let cards = get_all_cards_full();
-        for card in cards {
-            if card.0.meta.id == id {
-                return Some(card.1.category);
-            }
-        }
-        None
+        self.get_cards_with_filter(Box::new(Card::review_filter))
     }
 }
 

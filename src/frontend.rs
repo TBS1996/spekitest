@@ -1,12 +1,12 @@
 //! this will be about actually using the program like reviewing and all that
 
+use std::fmt::Display;
 use std::io::{stdout, Stdout};
 
 use crate::card::{AnnoCard, Card};
 use crate::categories::Category;
-use crate::common::open_file_with_vim;
 use crate::config::Config;
-use crate::folders::{get_path_from_id, view_cards_in_explorer};
+use crate::folders::view_cards_in_explorer;
 use crate::git::git_save;
 
 pub fn run() {
@@ -14,19 +14,12 @@ pub fn run() {
     let mut stdout = stdout();
     execute!(stdout, Hide).unwrap();
 
-    let menu_items = vec![
-        "Add new cards",
-        "Review cards",
-        "Review pending cards",
-        "Review unfinished cards",
-        "View cards",
-        "Settings",
-    ];
+    let menu_items = vec!["Add new cards", "Review cards", "View cards", "Settings"];
 
     while let Some(choice) = draw_menu(&mut stdout, &menu_items, true) {
         match choice {
             0 => {
-                let category = match choose_folder(&mut stdout, true) {
+                let category = match choose_folder(&mut stdout) {
                     Some(category) => category,
                     None => continue,
                 };
@@ -36,34 +29,29 @@ pub fn run() {
                 let _ = std::thread::spawn(move || git_save(has_remote));
             }
             1 => {
-                let category = match choose_folder(&mut stdout, true) {
+                let revtype =
+                    match draw_menu(&mut stdout, &["Normal", "Pending", "Unfinished"], true) {
+                        Some(x) => x,
+                        None => continue,
+                    };
+
+                let category = match choose_folder(&mut stdout) {
                     Some(category) => category,
                     None => continue,
                 };
-                review_cards(&mut stdout, category);
+
+                match revtype {
+                    0 => review_cards(&mut stdout, category),
+                    1 => review_pending_cards(&mut stdout, category),
+                    2 => review_unfinished_cards(&mut stdout, category),
+                    _ => continue,
+                }
+
                 let has_remote = Config::load().unwrap().git_remote.is_some();
                 let _ = std::thread::spawn(move || git_save(has_remote));
             }
-            2 => {
-                let category = match choose_folder(&mut stdout, true) {
-                    Some(category) => category,
-                    None => continue,
-                };
-                review_pending_cards(&mut stdout, category);
-                let has_remote = Config::load().unwrap().git_remote.is_some();
-                let _ = std::thread::spawn(move || git_save(has_remote));
-            }
+            2 => view_cards_in_explorer(),
             3 => {
-                let category = match choose_folder(&mut stdout, true) {
-                    Some(category) => category,
-                    None => continue,
-                };
-                review_unfinished_cards(&mut stdout, category);
-                let has_remote = Config::load().unwrap().git_remote.is_some();
-                let _ = std::thread::spawn(move || git_save(has_remote));
-            }
-            4 => view_cards_in_explorer(),
-            5 => {
                 let _ = Config::edit_with_vim();
             }
             _ => {}
@@ -139,7 +127,7 @@ pub fn add_cards(stdout: &mut Stdout, mut category: Category) {
         };
 
         if code == KeyCode::F(1) {
-            category = match choose_folder(stdout, true) {
+            category = match choose_folder(stdout) {
                 Some(category) => category,
                 None => continue,
             };
@@ -366,17 +354,30 @@ pub fn draw_message(stdout: &mut Stdout, message: &str) -> KeyCode {
     pressed_char
 }
 
-fn choose_folder(stdout: &mut Stdout, optional: bool) -> Option<Category> {
-    let mut folders = Category::load_all().unwrap();
-    Category::sort_categories(&mut folders);
+fn choose_folder(stdout: &mut Stdout) -> Option<Category> {
+    pick_item_with_formatter(
+        stdout,
+        &Category::load_all().unwrap(),
+        Category::print_it_with_depth,
+    )
+    .cloned()
+}
 
-    let mut items: Vec<String> = folders
-        .clone()
-        .into_iter()
-        .map(|cat| cat.print_it_with_depth())
-        .collect();
+fn pick_item<'a, T: Display>(stdout: &mut Stdout, items: &'a Vec<T>) -> Option<&'a T> {
+    let formatter = |item: &T| format!("{}", item);
+    pick_item_with_formatter(stdout, items, formatter)
+}
 
+fn pick_item_with_formatter<'a, T, F>(
+    stdout: &mut Stdout,
+    items: &'a Vec<T>,
+    formatter: F,
+) -> Option<&'a T>
+where
+    F: Fn(&T) -> String,
+{
     let mut selected = 0;
+
     loop {
         execute!(stdout, Clear(ClearType::All)).unwrap();
 
@@ -385,10 +386,10 @@ fn choose_folder(stdout: &mut Stdout, optional: bool) -> Option<Category> {
 
             if index == selected {
                 execute!(stdout, SetForegroundColor(crossterm::style::Color::Blue)).unwrap();
-                println!("> {}", item);
+                println!("> {}", formatter(item));
                 execute!(stdout, ResetColor).unwrap();
             } else {
-                println!("  {}", item);
+                println!("  {}", formatter(item));
             }
         }
 
@@ -403,26 +404,8 @@ fn choose_folder(stdout: &mut Stdout, optional: bool) -> Option<Category> {
                         selected += 1;
                     }
                 }
-                KeyCode::Char('n') => {
-                    if let Some(folder_name) = read_user_input(stdout) {
-                        let selected_category = folders[selected].clone();
-                        let new_category = selected_category._append(&folder_name.0);
-                        new_category.create();
-                        folders = Category::load_all().unwrap();
-                        Category::sort_categories(&mut folders);
-                        items = folders
-                            .clone()
-                            .into_iter()
-                            .map(|cat| cat.print_it_with_depth())
-                            .collect();
-                    }
-                }
-                KeyCode::Enter | KeyCode::Char(' ') => {
-                    execute!(stdout, Clear(ClearType::All)).unwrap();
-                    execute!(stdout, MoveTo(0, items.len() as u16 + 1)).unwrap();
-                    return Some(folders[selected].clone());
-                }
-                KeyCode::Char('q') | KeyCode::Esc if optional => return None,
+                KeyCode::Enter | KeyCode::Char(' ') => return Some(&items[selected]),
+                key if should_exit(&key) => return None,
                 _ => {}
             }
         }

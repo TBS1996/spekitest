@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::io::{self, ErrorKind};
 
 use std::path::Path;
@@ -45,4 +46,8 @@ pub fn open_file_with_vim(path: &Path) -> io::Result<()> {
             "Failed to open file with vim",
         ))
     }
+}
+
+pub trait MenuItem: Display {
+    fn action(&self) -> Box<dyn FnMut() -> bool>;
 }
