@@ -1,0 +1,19 @@
+[front]
+text = "what is a span??"
+
+[back]
+text = ""
+
+[meta]
+id = "173d25c1-4472-4ad1-b627-86b35b1945d8"
+dependencies = ["6f9c5986-016c-4267-8591-ed5952c88b2d"]
+dependents = []
+suspended = false
+finished = true
+stability = 3.0
+tags = []
+
+[[history]]
+timestamp = 1687160774
+grade = "perfect"
+time_spent = 0

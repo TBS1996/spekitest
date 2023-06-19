@@ -1,0 +1,35 @@
+[front]
+text = "what is tracing in sentry?"
+
+[back]
+text = "a way of connecting related errors/transactions between different software systems using spans"
+
+[meta]
+id = "c8775b70-5632-485a-b5fa-d25e8ee7a4fb"
+dependencies = ["173d25c1-4472-4ad1-b627-86b35b1945d8"]
+dependents = []
+suspended = false
+finished = true
+stability = 2.5
+tags = []
+
+
+[[history]]
+timestamp = 1686317797
+grade = "perfect"
+time_spent = 0
+
+[[history]]
+timestamp = 1686357383
+grade = "perfect"
+time_spent = 0
+
+[[history]]
+timestamp = 1686475671
+grade = "perfect"
+time_spent = 0
+
+[[history]]
+timestamp = 1687091612
+grade = "some"
+time_spent = 0
