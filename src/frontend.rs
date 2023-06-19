@@ -14,9 +14,16 @@ pub fn run() {
     let mut stdout = stdout();
     execute!(stdout, Hide).unwrap();
 
-    let menu_items = vec!["Add new cards", "Review cards", "View cards", "Settings"];
+    let menu_items = vec![
+        "Add new cards",
+        "Review cards",
+        "View cards",
+        "Settings",
+        "Debug",
+        "search",
+    ];
 
-    while let Some(choice) = draw_menu(&mut stdout, &menu_items, true) {
+    while let Some(choice) = draw_menu(&mut stdout, menu_items.clone(), true) {
         match choice {
             0 => {
                 let category = match choose_folder(&mut stdout) {
@@ -30,7 +37,7 @@ pub fn run() {
             }
             1 => {
                 let revtype =
-                    match draw_menu(&mut stdout, &["Normal", "Pending", "Unfinished"], true) {
+                    match draw_menu(&mut stdout, vec!["Normal", "Pending", "Unfinished"], true) {
                         Some(x) => x,
                         None => continue,
                     };
@@ -41,8 +48,18 @@ pub fn run() {
                 };
 
                 match revtype {
-                    0 => review_cards(&mut stdout, category),
-                    1 => review_pending_cards(&mut stdout, category),
+                    0 => {
+                        review_cards(&mut stdout, category.clone());
+                        draw_message(&mut stdout, "now reviewing pending cards");
+                        review_pending_cards(&mut stdout, category.clone());
+                        draw_message(&mut stdout, "Now reviewing unfinished cards");
+                        review_unfinished_cards(&mut stdout, category.clone());
+                    }
+                    1 => {
+                        review_pending_cards(&mut stdout, category.clone());
+                        draw_message(&mut stdout, "Now reviewing unfinished cards");
+                        review_unfinished_cards(&mut stdout, category.clone());
+                    }
                     2 => review_unfinished_cards(&mut stdout, category),
                     _ => continue,
                 }
@@ -53,6 +70,22 @@ pub fn run() {
             2 => view_cards_in_explorer(),
             3 => {
                 let _ = Config::edit_with_vim();
+            }
+            4 => {
+                let card = view_last_modified_cards(&mut stdout);
+                if let Some(card) = card {
+                    card.edit_with_vim();
+                }
+            }
+            5 => {
+                let input = match read_user_input(&mut stdout) {
+                    Some(input) => input,
+                    None => continue,
+                };
+                let card = view_search_cards(&mut stdout, input.0);
+                if let Some(card) = card {
+                    card.edit_with_vim();
+                }
             }
             _ => {}
         };
@@ -114,85 +147,126 @@ fn update_status_bar(stdout: &mut Stdout, msg: &str) {
     execute!(stdout, cursor::MoveTo(pre_pos.0, pre_pos.1)).unwrap();
 }
 
-pub fn add_cards(stdout: &mut Stdout, mut category: Category) {
-    loop {
-        execute!(stdout, Clear(ClearType::All)).unwrap();
-        execute!(stdout, MoveTo(0, 1)).unwrap();
-        update_status_bar(stdout, "--front side--");
-        let mut key_code;
+pub fn add_card(stdout: &mut Stdout, category: Category) -> Option<AnnoCard> {
+    execute!(stdout, Clear(ClearType::All)).unwrap();
+    execute!(stdout, MoveTo(0, 1)).unwrap();
+    update_status_bar(stdout, "--front side--");
+    let mut key_code;
 
-        let (front_text, code) = match read_user_input(stdout) {
+    let (front_text, code) = match read_user_input(stdout) {
+        Some((text, code)) => (text, code),
+        None => return None,
+    };
+
+    key_code = code;
+
+    let back_text = if key_code != KeyCode::Tab {
+        execute!(stdout, MoveDown(2)).unwrap();
+        move_far_left(stdout);
+        println!("--back side--");
+        move_far_left(stdout);
+
+        let (back_text, code) = match read_user_input(stdout) {
             Some((text, code)) => (text, code),
-            None => return,
+            None => return None,
         };
-
-        if code == KeyCode::F(1) {
-            category = match choose_folder(stdout) {
-                Some(category) => category,
-                None => continue,
-            };
-            continue;
-        }
 
         key_code = code;
 
-        let back_text = if key_code != KeyCode::Tab {
-            execute!(stdout, MoveDown(2)).unwrap();
-            move_far_left(stdout);
-            println!("--back side--");
-            move_far_left(stdout);
+        back_text
+    } else {
+        String::new()
+    };
 
-            let (back_text, code) = match read_user_input(stdout) {
-                Some((text, code)) => (text, code),
-                None => return,
-            };
+    let mut card = Card::new_simple(front_text, back_text);
 
-            key_code = code;
+    if key_code == KeyCode::Tab {
+        card.meta.finished = false;
+    }
 
-            back_text
-        } else {
-            String::new()
-        };
+    Some(card.save_new_card(&category))
+}
 
-        let mut card = Card::new_simple(front_text, back_text);
-
-        if key_code == KeyCode::Tab {
-            card.meta.finished = false;
+pub fn add_cards(stdout: &mut Stdout, category: Category) {
+    loop {
+        if add_card(stdout, category.clone()).is_none() {
+            return;
         }
-
-        card.save_new_card(&category);
     }
 }
 
 pub fn review_unfinished_cards(stdout: &mut Stdout, category: Category) {
-    let categories = category.get_following_categories();
+    let mut cards = category.get_unfinished_cards(true);
+    let mut selected = 0;
 
-    for category in categories {
-        let mut cards = category.get_unfinished_cards();
+    loop {
+        if cards.is_empty() {
+            break;
+        }
+        let cardqty = cards.len();
+        let mut card = &mut cards[selected];
+        let get_message = |card: &AnnoCard| {
+            format!(
+                "{}/{}\n{}\n-------------------\n{}",
+                selected + 1,
+                cardqty,
+                card.0.front.text,
+                card.0.back.text
+            )
+        };
 
-        for card in cards.iter_mut() {
-            let get_message = |card: &AnnoCard| {
-                format!(
-                    "{}\n-------------------\n{}",
-                    card.0.front.text, card.0.back.text
-                )
-            };
-
-            loop {
-                match draw_message(stdout, &get_message(card)) {
-                    KeyCode::Char('f') => {
-                        card.0.meta.finished = true;
-                        card.update_card();
-                        break;
+        match draw_message(stdout, &get_message(card)) {
+            KeyCode::Char('f') => {
+                card.0.meta.finished = true;
+                cards.remove(selected);
+                selected = selected.saturating_sub(1);
+            }
+            KeyCode::Char('y') => {
+                *card = match pick_card_from_search(stdout) {
+                    Some(chosen_card) => {
+                        card.0.meta.dependencies.push(chosen_card.0.meta.id);
+                        card.update_card()
                     }
-                    KeyCode::Char('s') => break,
-                    KeyCode::Char('e') => {
-                        *card = card.edit_with_vim();
-                    }
-                    key if should_exit(&key) => return,
-                    _ => {}
+                    None => continue,
                 }
             }
+            KeyCode::Char('t') => {
+                *card = match pick_card_from_search(stdout) {
+                    Some(chosen_card) => {
+                        card.0.meta.dependents.push(chosen_card.0.meta.id);
+                        card.update_card()
+                    }
+                    None => continue,
+                }
+            }
+            KeyCode::Char('T') => {
+                draw_message(stdout, "Adding new dependent");
+                if let Some(updated_card) =
+                    add_dependent(stdout, card.to_owned(), Some(category.clone()))
+                {
+                    *card = updated_card;
+                }
+            }
+            KeyCode::Char('Y') => {
+                draw_message(stdout, "Adding new dependency");
+                if let Some(updated_card) =
+                    add_dependency(stdout, card.to_owned(), Some(category.clone()))
+                {
+                    *card = updated_card;
+                }
+            }
+            KeyCode::Char('e') => {
+                *card = card.edit_with_vim();
+            }
+            KeyCode::Right => {
+                if selected != cards.len() - 1 {
+                    selected += 1;
+                }
+            }
+            KeyCode::Left => selected = selected.saturating_sub(1),
+
+            key if should_exit(&key) => break,
+            _ => {}
         }
     }
     draw_message(stdout, "Nothing left to review!");
@@ -207,7 +281,6 @@ pub fn review_pending_cards(stdout: &mut Stdout, category: Category) {
             return;
         }
     }
-    draw_message(stdout, "Nothing left to review!");
 }
 
 fn update_card_review_status(stdout: &mut Stdout, i: usize, qty: usize, category: &Category) {
@@ -304,7 +377,6 @@ pub fn review_cards(stdout: &mut Stdout, category: Category) {
             return;
         }
     }
-    draw_message(stdout, "Nothing left to review!");
 }
 
 use crossterm::cursor::{self, MoveDown, MoveLeft, Show};
@@ -344,7 +416,13 @@ pub fn draw_message(stdout: &mut Stdout, message: &str) -> KeyCode {
     execute!(stdout, MoveTo(0, 0)).unwrap();
 
     execute!(stdout, Clear(ClearType::All)).unwrap();
-    println!("{}", message);
+    for char in message.chars() {
+        print!("{char}");
+        if char == '\n' {
+            move_far_left(stdout);
+        }
+    }
+    //println!("{}", message);
     execute!(stdout, ResetColor).unwrap();
 
     let pressed_char = get_keycode();
@@ -399,6 +477,7 @@ where
                 KeyCode::Up | KeyCode::Char('k') => {
                     selected = selected.saturating_sub(1);
                 }
+                KeyCode::Char('G') => selected = items.len() - 1,
                 KeyCode::Down | KeyCode::Char('j') => {
                     if selected < items.len() - 1 {
                         selected += 1;
@@ -412,7 +491,7 @@ where
     }
 }
 
-fn draw_menu(stdout: &mut Stdout, items: &[&str], optional: bool) -> Option<usize> {
+fn draw_menu(stdout: &mut Stdout, items: Vec<&str>, optional: bool) -> Option<usize> {
     let mut selected = 0;
 
     loop {
@@ -441,6 +520,7 @@ fn draw_menu(stdout: &mut Stdout, items: &[&str], optional: bool) -> Option<usiz
                         selected += 1;
                     }
                 }
+                KeyCode::Char('G') => selected = items.len() - 1,
                 KeyCode::Enter | KeyCode::Char(' ') => {
                     execute!(stdout, Clear(ClearType::All)).unwrap();
                     execute!(stdout, MoveTo(0, items.len() as u16 + 1)).unwrap();
@@ -451,4 +531,45 @@ fn draw_menu(stdout: &mut Stdout, items: &[&str], optional: bool) -> Option<usiz
             }
         }
     }
+}
+
+pub fn view_last_modified_cards(stdout: &mut Stdout) -> Option<AnnoCard> {
+    let mut cards = AnnoCard::load_all();
+    AnnoCard::sort_by_last_modified(&mut cards);
+    cards.truncate(10);
+    pick_item(stdout, &cards).cloned()
+}
+
+pub fn view_search_cards(stdout: &mut Stdout, searchterm: String) -> Option<AnnoCard> {
+    let mut cards = AnnoCard::search(searchterm);
+    cards.truncate(10);
+    pick_item(stdout, &cards).cloned()
+}
+
+pub fn add_dependency(
+    stdout: &mut Stdout,
+    mut card: AnnoCard,
+    category: Option<Category>,
+) -> Option<AnnoCard> {
+    let category = category.unwrap_or_else(|| card.1.category.clone());
+    let new_dependency = add_card(stdout, category)?;
+    card.0.meta.dependencies.push(new_dependency.0.meta.id);
+    Some(card.update_card())
+}
+
+pub fn add_dependent(
+    stdout: &mut Stdout,
+    mut card: AnnoCard,
+    category: Option<Category>,
+) -> Option<AnnoCard> {
+    let category = category.unwrap_or_else(|| card.1.category.clone());
+    let new_dependent = add_card(stdout, category)?;
+    card.0.meta.dependents.push(new_dependent.0.meta.id);
+    Some(card.update_card())
+}
+
+pub fn pick_card_from_search(stdout: &mut Stdout) -> Option<AnnoCard> {
+    let input = read_user_input(stdout)?;
+    let cards = AnnoCard::search(input.0);
+    pick_item(stdout, &cards).cloned()
 }

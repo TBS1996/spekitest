@@ -1,5 +1,5 @@
-use crate::card::{AnnoCard, Card};
-use crate::folders::get_cards_from_category;
+use crate::card::{AnnoCard, Card, CardFileData};
+use crate::folders::get_last_modified;
 use crate::paths::{self, get_cards_path};
 use std::fs;
 use std::io;
@@ -7,10 +7,14 @@ use std::path::Path;
 use std::path::PathBuf;
 
 // Represent the category that a card is in, can be nested
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Hash, Debug, Clone, Default, PartialEq)]
 pub struct Category(pub Vec<String>);
 
 impl Category {
+    pub fn root() -> Self {
+        Self::default()
+    }
+
     pub fn joined(&self) -> String {
         self.0.join("/")
     }
@@ -30,6 +34,30 @@ impl Category {
         } else {
             panic!();
         }
+    }
+
+    pub fn get_containing_cards(&self) -> Vec<AnnoCard> {
+        let directory = self.as_path();
+        let mut cards = Vec::new();
+
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("toml") {
+                let card = AnnoCard::from_path(path.as_path()).into_card();
+                let full_card = AnnoCard(
+                    card,
+                    CardFileData {
+                        file_name: path.file_name().unwrap().to_owned(),
+                        category: self.to_owned(),
+                        last_modified: get_last_modified(path),
+                    },
+                );
+                cards.push(full_card);
+            }
+        }
+        cards
     }
 
     pub fn sort_categories(categories: &mut [Category]) {
@@ -122,14 +150,23 @@ impl Category {
     }
 
     fn get_cards_with_filter(&self, mut filter: Box<dyn FnMut(&Card) -> bool>) -> Vec<AnnoCard> {
-        get_cards_from_category(self)
+        self.get_containing_cards()
             .into_iter()
             .filter(|card| filter(card.card_as_ref()))
             .collect()
     }
 
-    pub fn get_unfinished_cards(&self) -> Vec<AnnoCard> {
-        self.get_cards_with_filter(Box::new(Card::unfinished_filter))
+    pub fn get_unfinished_cards(&self, recursion: bool) -> Vec<AnnoCard> {
+        match recursion {
+            true => {
+                let mut vec = vec![];
+                for cat in self.get_following_categories() {
+                    vec.extend(cat.get_cards_with_filter(Box::new(Card::unfinished_filter)));
+                }
+                vec
+            }
+            false => self.get_cards_with_filter(Box::new(Card::unfinished_filter)),
+        }
     }
 
     pub fn get_pending_cards(&self) -> Vec<AnnoCard> {

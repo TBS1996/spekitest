@@ -14,6 +14,21 @@ pub fn system_time_as_unix_time(time: SystemTime) -> Duration {
         .expect("Time went backwards")
 }
 
+pub fn truncate_string(input: String, max_len: usize) -> String {
+    let mut graphemes = input.chars();
+    let mut result = String::new();
+
+    for _ in 0..max_len {
+        if let Some(c) = graphemes.next() {
+            result.push(c);
+        } else {
+            break;
+        }
+    }
+
+    result
+}
+
 pub mod serde_duration_as_secs {
     use serde::{Deserialize, Deserializer, Serializer};
     use std::time::Duration;

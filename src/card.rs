@@ -1,4 +1,7 @@
 use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
+use std::collections::HashMap;
+use std::ffi::OsString;
 use std::fs::read_to_string;
 use std::path::{Path, PathBuf};
 
@@ -8,7 +11,10 @@ use uuid::Uuid;
 use crate::categories::Category;
 use crate::folders::get_all_cards_full;
 use crate::media::AudioSource;
+use crate::VisitStuff;
 use crate::{common::current_time, Id};
+
+pub type StrengthMap = HashMap<AnnoCard, Option<f32>>;
 
 pub struct CardPath(PathBuf);
 
@@ -19,16 +25,16 @@ impl CardPath {
     }
 }
 
-#[derive(Clone)]
+#[derive(Hash, Clone)]
 pub struct CardFileData {
-    pub file_name: String,
+    pub file_name: OsString,
     pub category: Category,
     pub last_modified: Duration,
 }
 
 impl CardFileData {
     pub fn from_path(path: &Path) -> Self {
-        let file_name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let file_name = path.file_name().unwrap().to_owned();
         let category = Category::from_card_path(path);
         let last_modified = {
             let system_time = std::fs::metadata(path).unwrap().modified().unwrap();
@@ -49,8 +55,16 @@ impl CardFileData {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Hash)]
 pub struct AnnoCard(pub Card, pub CardFileData);
+
+impl std::fmt::Display for AnnoCard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.card_as_ref().front.text)
+    }
+}
+
+pub struct CardWithRecall(pub AnnoCard, Option<f32>);
 
 impl From<AnnoCard> for Card {
     fn from(value: AnnoCard) -> Self {
@@ -58,10 +72,83 @@ impl From<AnnoCard> for Card {
     }
 }
 
+impl VisitStuff for AnnoCard {
+    fn get_children(&self) -> Vec<Self> {
+        AnnoCard::from_ids(self.0.meta.dependencies.clone())
+    }
+
+    fn matches_predicate(&self) -> bool {
+        !self.0.meta.finished
+    }
+}
+
 impl AnnoCard {
+    pub fn get_cards_from_category_recursively(category: &Category) -> Vec<Self> {
+        let mut cards = vec![];
+        let cats = category.get_following_categories();
+        for cat in cats {
+            cards.extend(cat.get_containing_cards());
+        }
+        cards
+    }
+
+    pub fn search(input: String) -> Vec<Self> {
+        Self::load_all()
+            .into_iter()
+            .filter(|card| {
+                card.0
+                    .front
+                    .text
+                    .to_ascii_lowercase()
+                    .contains(&input.to_ascii_lowercase())
+                    || card
+                        .0
+                        .back
+                        .text
+                        .to_ascii_lowercase()
+                        .contains(&input.to_ascii_lowercase())
+            })
+            .collect()
+    }
+
+    pub fn is_resolved(&self) -> bool {
+        !self.visit()
+    }
+
+    pub fn from_ids(ids: Vec<Id>) -> Vec<Self> {
+        let mut vec = vec![];
+        for id in ids {
+            if let Some(card) = Self::from_id(id) {
+                vec.push(card);
+            }
+        }
+        vec
+    }
+
+    pub fn from_id(id: Id) -> Option<Self> {
+        Self::load_all()
+            .into_iter()
+            .find(|card| card.0.meta.id == id)
+    }
+    pub fn load_all() -> Vec<Self> {
+        Self::get_cards_from_category_recursively(&Category::root())
+    }
+
+    pub fn get_id_map() -> HashMap<Id, Self> {
+        let mut map = HashMap::new();
+        let cards = Self::load_all();
+        for card in cards {
+            map.insert(card.0.meta.id, card);
+        }
+        map
+    }
+
+    pub fn sort_by_last_modified(vec: &mut [Self]) {
+        vec.sort_by_key(|k| Reverse(k.1.last_modified));
+    }
+
     pub fn get_full_card_from_id(id: Id) -> Option<Self> {
         let cards = get_all_cards_full();
-
         cards.into_iter().find(|card| card.0.meta.id == id)
     }
 
@@ -110,7 +197,7 @@ impl AnnoCard {
         AnnoCard::from_path(path.as_path())
     }
 
-    pub fn refresh_card(&mut self) {
+    pub fn refresh(&mut self) {
         *self = Self::from_path(&self.1.as_path())
     }
 
@@ -123,7 +210,7 @@ impl AnnoCard {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, Default, Clone)]
+#[derive(Hash, Deserialize, Serialize, Debug, Default, Clone)]
 pub struct Card {
     pub front: Side,
     pub back: Side,
@@ -141,6 +228,13 @@ impl Card {
             meta,
             history: Vec::new(),
         }
+    }
+
+    pub fn is_resolved(&self) -> bool {
+        if self.meta.dependencies.is_empty() {
+            return true;
+        }
+        false
     }
 
     pub fn new_simple(front: String, back: String) -> Self {
@@ -198,10 +292,13 @@ impl Card {
     pub fn save_new_card(self, category: &Category) -> AnnoCard {
         let toml = toml::to_string(&self).unwrap();
         std::fs::create_dir_all(category.as_path()).unwrap();
-        let path = category
-            .as_path()
-            .join(self.front.text)
-            .with_extension("toml");
+        let max_char_len = 40;
+        let mut file_name = PathBuf::from(truncate_string(self.front.text, max_char_len));
+        if file_name.exists() {
+            file_name = PathBuf::from(self.meta.id.to_string());
+        }
+
+        let path = category.as_path().join(file_name).with_extension("toml");
 
         std::fs::write(&path, toml).unwrap();
 
@@ -219,7 +316,7 @@ impl Card {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, Default, Clone)]
+#[derive(Hash, Deserialize, Serialize, Debug, Default, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum Grade {
     // No recall, not even when you saw the answer.
@@ -258,9 +355,11 @@ impl std::str::FromStr for Grade {
     }
 }
 
-use crate::common::{open_file_with_vim, serde_duration_as_secs, system_time_as_unix_time};
+use crate::common::{
+    open_file_with_vim, serde_duration_as_secs, system_time_as_unix_time, truncate_string,
+};
 
-#[derive(Deserialize, Clone, Serialize, Debug, Default)]
+#[derive(Hash, Deserialize, Clone, Serialize, Debug, Default)]
 pub struct Review {
     // When (unix time) did the review take place?
     #[serde(with = "serde_duration_as_secs")]
@@ -282,7 +381,7 @@ impl Review {
     }
 }
 
-#[derive(Deserialize, Clone, Serialize, Debug, Default)]
+#[derive(Hash, Deserialize, Clone, Serialize, Debug, Default)]
 pub struct Side {
     pub text: String,
     #[serde(flatten)]
@@ -291,7 +390,7 @@ pub struct Side {
     //pub image: ImagePath,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Hash, Deserialize, Serialize, Debug, Clone)]
 pub struct Meta {
     pub id: Id,
     pub dependencies: Vec<Id>,

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{config::Config, paths::get_media_path};
 
-#[derive(Deserialize, Clone, Serialize, Debug, Default)]
+#[derive(Hash, Deserialize, Clone, Serialize, Debug, Default)]
 pub struct AudioSource {
     #[serde(default)]
     #[serde(rename = "audio_local")]
