@@ -85,6 +85,12 @@ impl Category {
         self.0.last().unwrap_or(&"root".to_string()).clone()
     }
 
+    pub fn print_full(&self) -> String {
+        let mut s = "/".to_string();
+        s.push_str(&self.joined());
+        s
+    }
+
     pub fn print_it_with_depth(&self) -> String {
         let mut s = String::new();
         for _ in 0..self.0.len() {

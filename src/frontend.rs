@@ -207,7 +207,8 @@ pub fn review_unfinished_cards(stdout: &mut Stdout, category: Category) {
         let mut card = &mut cards[selected];
         let get_message = |card: &AnnoCard| {
             format!(
-                "{}/{}\n{}\n-------------------\n{}",
+                "{}   {}/{}\n{}\n-------------------\n{}",
+                category.print_full(),
                 selected + 1,
                 cardqty,
                 card.0.front.text,
