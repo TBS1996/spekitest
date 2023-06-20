@@ -197,6 +197,7 @@ pub fn add_cards(stdout: &mut Stdout, category: Category) {
 
 pub fn review_unfinished_cards(stdout: &mut Stdout, category: Category) {
     let mut cards = category.get_unfinished_cards(true);
+    cards.reverse();
     let mut selected = 0;
 
     loop {
@@ -219,6 +220,11 @@ pub fn review_unfinished_cards(stdout: &mut Stdout, category: Category) {
         match draw_message(stdout, &get_message(card)) {
             KeyCode::Char('f') => {
                 card.0.meta.finished = true;
+                let the_card = cards.remove(selected);
+                the_card.update_card();
+                selected = selected.saturating_sub(1);
+            }
+            KeyCode::Char('s') => {
                 cards.remove(selected);
                 selected = selected.saturating_sub(1);
             }
@@ -255,6 +261,12 @@ pub fn review_unfinished_cards(stdout: &mut Stdout, category: Category) {
                 {
                     *card = updated_card;
                 }
+            }
+            KeyCode::Char('D') => {
+                let the_card = cards.remove(selected);
+                the_card.delete();
+                selected = selected.saturating_sub(1);
+                draw_message(stdout, "Card deleted");
             }
             KeyCode::Char('e') => {
                 *card = card.edit_with_vim();

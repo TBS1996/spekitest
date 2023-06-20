@@ -83,6 +83,11 @@ impl VisitStuff for AnnoCard {
 }
 
 impl AnnoCard {
+    pub fn delete(self) {
+        let path = self.full_path();
+        std::fs::remove_file(path).unwrap();
+    }
+
     pub fn get_cards_from_category_recursively(category: &Category) -> Vec<Self> {
         let mut cards = vec![];
         let cats = category.get_following_categories();
