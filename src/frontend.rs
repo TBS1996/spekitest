@@ -3,7 +3,7 @@
 use std::fmt::Display;
 use std::io::{stdout, Stdout};
 
-use crate::card::{AnnoCard, Card};
+use crate::card::{AnnoCard, Card, CardAndRecall, ReviewType};
 use crate::categories::Category;
 use crate::config::Config;
 use crate::folders::view_cards_in_explorer;
@@ -50,18 +50,44 @@ pub fn run() {
 
                 match revtype {
                     0 => {
-                        review_cards(&mut stdout, category.clone());
+                        review_cards(
+                            &mut stdout,
+                            category.clone(),
+                            Box::new(Category::get_review_cards),
+                        );
                         draw_message(&mut stdout, "now reviewing pending cards");
-                        review_pending_cards(&mut stdout, category.clone());
+                        review_cards(
+                            &mut stdout,
+                            category.clone(),
+                            Box::new(Category::get_pending_cards),
+                        );
                         draw_message(&mut stdout, "Now reviewing unfinished cards");
-                        review_unfinished_cards(&mut stdout, category.clone());
+                        review_cards(
+                            &mut stdout,
+                            category.clone(),
+                            Box::new(Category::get_unfinished_cards),
+                        );
                     }
                     1 => {
-                        review_pending_cards(&mut stdout, category.clone());
+                        review_cards(
+                            &mut stdout,
+                            category.clone(),
+                            Box::new(Category::get_pending_cards),
+                        );
                         draw_message(&mut stdout, "Now reviewing unfinished cards");
-                        review_unfinished_cards(&mut stdout, category.clone());
+                        review_cards(
+                            &mut stdout,
+                            category.clone(),
+                            Box::new(Category::get_unfinished_cards),
+                        );
                     }
-                    2 => review_unfinished_cards(&mut stdout, category),
+                    2 => {
+                        review_cards(
+                            &mut stdout,
+                            category.clone(),
+                            Box::new(Category::get_unfinished_cards),
+                        );
+                    }
                     _ => continue,
                 }
 
@@ -89,36 +115,17 @@ pub fn run() {
                 }
             }
             6 => {
-                let revtype =
-                    match draw_menu(&mut stdout, vec!["Normal", "Pending", "Unfinished"], true) {
-                        Some(x) => x,
-                        None => continue,
-                    };
-
-                let category = match choose_folder(&mut stdout) {
-                    Some(category) => category,
-                    None => continue,
-                };
-
-                match revtype {
-                    0 => {
-                        review_cards(&mut stdout, category.clone());
-                        draw_message(&mut stdout, "now reviewing pending cards");
-                        review_pending_cards(&mut stdout, category.clone());
-                        draw_message(&mut stdout, "Now reviewing unfinished cards");
-                        review_unfinished_cards(&mut stdout, category.clone());
+                let mut cnt = 0;
+                let mut cards = AnnoCard::print_by_strength();
+                while let Some(card) = cards.pop_first() {
+                    println!("{}", card);
+                    move_far_left(&mut stdout);
+                    cnt += 1;
+                    if cnt == 50 {
+                        break;
                     }
-                    1 => {
-                        review_pending_cards(&mut stdout, category.clone());
-                        draw_message(&mut stdout, "Now reviewing unfinished cards");
-                        review_unfinished_cards(&mut stdout, category.clone());
-                    }
-                    2 => review_unfinished_cards(&mut stdout, category),
-                    _ => continue,
                 }
-
-                let has_remote = Config::load().unwrap().git_remote.is_some();
-                let _ = std::thread::spawn(move || git_save(has_remote));
+                read().unwrap();
             }
             _ => {}
         };
@@ -180,7 +187,7 @@ fn update_status_bar(stdout: &mut Stdout, msg: &str) {
     execute!(stdout, cursor::MoveTo(pre_pos.0, pre_pos.1)).unwrap();
 }
 
-pub fn add_card(stdout: &mut Stdout, category: Category) -> Option<AnnoCard> {
+pub fn add_card(stdout: &mut Stdout, category: &Category) -> Option<AnnoCard> {
     execute!(stdout, Clear(ClearType::All)).unwrap();
     execute!(stdout, MoveTo(0, 1)).unwrap();
     update_status_bar(stdout, "--front side--");
@@ -222,14 +229,94 @@ pub fn add_card(stdout: &mut Stdout, category: Category) -> Option<AnnoCard> {
 
 pub fn add_cards(stdout: &mut Stdout, category: Category) {
     loop {
-        if add_card(stdout, category.clone()).is_none() {
+        if add_card(stdout, &category).is_none() {
             return;
         }
     }
 }
 
+pub enum SomeStatus {
+    Continue,
+    Break,
+}
+
+fn review_unfinished_card(stdout: &mut Stdout, card: &mut AnnoCard) -> SomeStatus {
+    let get_message = |card: &AnnoCard| {
+        format!(
+            "{}\n-------------------\n{}",
+            card.0.front.text, card.0.back.text
+        )
+    };
+
+    loop {
+        match draw_message(stdout, &get_message(card)) {
+            KeyCode::Char('f') => {
+                card.0.meta.finished = true;
+                card.update_card();
+            }
+            KeyCode::Char('s') => break,
+            KeyCode::Char('y') => {
+                *card = match pick_card_from_search(stdout) {
+                    Some(chosen_card) => {
+                        card.0.meta.dependencies.push(chosen_card.0.meta.id);
+                        card.update_card()
+                    }
+                    None => continue,
+                }
+            }
+            KeyCode::Char('t') => {
+                *card = match pick_card_from_search(stdout) {
+                    Some(chosen_card) => {
+                        card.0.meta.dependents.push(chosen_card.0.meta.id);
+                        card.update_card()
+                    }
+                    None => continue,
+                }
+            }
+            KeyCode::Char('g') => {
+                let tags = card.1.category.get_tags().into_iter().collect();
+                let tag = match pick_item(stdout, &tags) {
+                    Some(tag) => tag,
+                    None => continue,
+                };
+                card.0.meta.tags.push(tag.to_owned());
+                *card = card.update_card();
+            }
+
+            KeyCode::Char('T') => {
+                draw_message(stdout, "Adding new dependent");
+                if let Some(updated_card) =
+                    add_dependent(stdout, card.to_owned(), Some(&card.1.category))
+                {
+                    *card = updated_card;
+                }
+            }
+            KeyCode::Char('Y') => {
+                draw_message(stdout, "Adding new dependency");
+                if let Some(updated_card) =
+                    add_dependency(stdout, card.to_owned(), Some(&card.1.category))
+                {
+                    *card = updated_card;
+                }
+            }
+            KeyCode::Char('D') => {
+                card.clone().delete();
+                draw_message(stdout, "Card deleted");
+                break;
+            }
+            KeyCode::Char('e') => {
+                *card = card.edit_with_vim();
+            }
+
+            key if should_exit(&key) => return SomeStatus::Break,
+            _ => {}
+        };
+    }
+    SomeStatus::Continue
+}
+
 pub fn review_unfinished_cards(stdout: &mut Stdout, category: Category) {
-    let mut cards = category.get_unfinished_cards(true);
+    let mut cards = category.get_unfinished_cards();
     cards.reverse();
     let mut selected = 0;
 
@@ -291,7 +378,7 @@ pub fn review_unfinished_cards(stdout: &mut Stdout, category: Category) {
             KeyCode::Char('T') => {
                 draw_message(stdout, "Adding new dependent");
                 if let Some(updated_card) =
-                    add_dependent(stdout, card.to_owned(), Some(category.clone()))
+                    add_dependent(stdout, card.to_owned(), Some(&category.clone()))
                 {
                     *card = updated_card;
                 }
@@ -299,7 +386,7 @@ pub fn review_unfinished_cards(stdout: &mut Stdout, category: Category) {
             KeyCode::Char('Y') => {
                 draw_message(stdout, "Adding new dependency");
                 if let Some(updated_card) =
-                    add_dependency(stdout, card.to_owned(), Some(category.clone()))
+                    add_dependency(stdout, card.to_owned(), Some(&category.clone()))
                 {
                     *card = updated_card;
                 }
@@ -313,12 +400,12 @@ pub fn review_unfinished_cards(stdout: &mut Stdout, category: Category) {
             KeyCode::Char('e') => {
                 *card = card.edit_with_vim();
             }
-            KeyCode::Right => {
+            KeyCode::Right | KeyCode::Char('l') => {
                 if selected != cards.len() - 1 {
                     selected += 1;
                 }
             }
-            KeyCode::Left => selected = selected.saturating_sub(1),
+            KeyCode::Left | KeyCode::Char('h') => selected = selected.saturating_sub(1),
 
             key if should_exit(&key) => break,
             _ => {}
@@ -338,14 +425,18 @@ pub fn review_pending_cards(stdout: &mut Stdout, category: Category) {
     }
 }
 
-fn update_card_review_status(stdout: &mut Stdout, i: usize, qty: usize, category: &Category) {
-    let msg = format!(
+fn update_card_review_status(
+    stdout: &mut Stdout,
+    i: usize,
+    qty: usize,
+    category: &Category,
+) -> String {
+    format!(
         "Reviewing card {}/{} in {}",
         i + 1,
         qty,
         category.print_it()
-    );
-    update_status_bar(stdout, &msg);
+    )
 }
 
 fn print_card_review_front(stdout: &mut Stdout, card: &mut Card, sound: bool) {
@@ -379,6 +470,44 @@ fn print_card_review_full(stdout: &mut Stdout, card: &mut Card) {
     execute!(stdout, Clear(ClearType::All)).unwrap();
     print_card_review_front(stdout, card, false);
     print_card_review_back(stdout, card, false);
+}
+
+fn review_card(stdout: &mut Stdout, card: &mut AnnoCard, status: String) -> SomeStatus {
+    execute!(stdout, Clear(ClearType::All)).unwrap();
+    update_status_bar(stdout, &status);
+
+    print_card_review_front(stdout, card.card_as_mut_ref(), true);
+
+    if should_exit(&get_keycode()) {
+        return SomeStatus::Break;
+    }
+
+    print_card_review_back(stdout, card.card_as_mut_ref(), true);
+    loop {
+        match get_char() {
+            'q' => return SomeStatus::Break,
+            'e' => {
+                *card = card.edit_with_vim();
+                print_card_review_full(stdout, card.card_as_mut_ref());
+            }
+            'j' => {
+                card.0.meta.suspended = true;
+                draw_message(stdout, "card suspended");
+                break;
+            }
+            // skip card
+            's' => break,
+
+            c => match c.to_string().parse() {
+                Ok(grade) => {
+                    *card = card.new_review(grade);
+                    break;
+                }
+                _ => continue,
+            },
+        }
+    }
+    SomeStatus::Continue
 }
 
 fn rev_cards(stdout: &mut Stdout, mut cards: Vec<AnnoCard>) -> bool {
@@ -422,13 +551,29 @@ fn rev_cards(stdout: &mut Stdout, mut cards: Vec<AnnoCard>) -> bool {
     false
 }
 
-pub fn review_cards(stdout: &mut Stdout, category: Category) {
+pub fn review_cards(
+    stdout: &mut Stdout,
+    category: Category,
+    mut get_cards: Box<dyn FnMut(&Category) -> Vec<AnnoCard>>,
+) {
     let categories = category.get_following_categories();
 
     for category in categories {
-        let cards = category.get_review_cards();
-        if rev_cards(stdout, cards) {
-            return;
+        let mut cards = get_cards(&category);
+        let status = "foobar".to_string();
+        for card in cards.iter_mut() {
+            match {
+                match card.get_review_type() {
+                    ReviewType::Normal | ReviewType::Pending => {
+                        review_card(stdout, card, status.clone())
+                    }
+
+                    ReviewType::Unfinished => review_unfinished_card(stdout, card),
+                }
+            } {
+                SomeStatus::Continue => continue,
+                SomeStatus::Break => return,
+            }
         }
     }
 }
@@ -607,9 +752,9 @@ pub fn view_search_cards(stdout: &mut Stdout, searchterm: String) -> Option<Anno
 pub fn add_dependency(
     stdout: &mut Stdout,
     mut card: AnnoCard,
-    category: Option<Category>,
+    category: Option<&Category>,
 ) -> Option<AnnoCard> {
-    let category = category.unwrap_or_else(|| card.1.category.clone());
+    let category = category.unwrap_or(&card.1.category);
     let new_dependency = add_card(stdout, category)?;
     card.0.meta.dependencies.push(new_dependency.0.meta.id);
     Some(card.update_card())
@@ -618,10 +763,10 @@ pub fn add_dependency(
 pub fn add_dependent(
     stdout: &mut Stdout,
     mut card: AnnoCard,
-    category: Option<Category>,
+    category: Option<&Category>,
 ) -> Option<AnnoCard> {
-    let category = category.unwrap_or_else(|| card.1.category.clone());
-    let new_dependent = add_card(stdout, category)?;
+    let category = category.cloned().unwrap_or_else(|| card.1.category.clone());
+    let new_dependent = add_card(stdout, &category)?;
     card.0.meta.dependents.push(new_dependent.0.meta.id);
     Some(card.update_card())
 }

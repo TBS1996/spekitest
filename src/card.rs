@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
-use std::cmp::Reverse;
-use std::collections::HashMap;
+use std::cmp::{Ordering, Reverse};
+use std::collections::{BTreeSet, HashMap};
 use std::ffi::OsString;
+use std::fmt::Display;
 use std::fs::read_to_string;
 use std::path::{Path, PathBuf};
 
@@ -15,13 +16,73 @@ use crate::VisitStuff;
 use crate::{common::current_time, Id};
 
 pub type StrengthMap = HashMap<AnnoCard, Option<f32>>;
+pub type RecallRate = f32;
+
+pub struct CardAndRecall {
+    card_path: CardPath,
+    recall_rate: RecallRate,
+}
+
+impl CardAndRecall {
+    fn from_card(card: &AnnoCard) -> Option<Self> {
+        let card_path = CardPath::new(card);
+        let recall_rate = card.0.recall_rate()?;
+        Self {
+            card_path,
+            recall_rate,
+        }
+        .into()
+    }
+}
+
+impl Display for CardAndRecall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}: {}%",
+            self.card_path
+                .as_ref()
+                .file_name()
+                .unwrap()
+                .to_string_lossy(),
+            self.recall_rate
+        )
+    }
+}
+
+impl Eq for CardAndRecall {}
+
+impl PartialEq for CardAndRecall {
+    fn eq(&self, other: &Self) -> bool {
+        self.recall_rate == other.recall_rate
+    }
+}
+
+impl Ord for CardAndRecall {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // This will order by recall rate in ascending order
+        // Use `cmp` function to order in descending order
+        self.recall_rate
+            .partial_cmp(&other.recall_rate)
+            .unwrap_or(Ordering::Equal)
+    }
+}
+
+impl PartialOrd for CardAndRecall {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 pub struct CardPath(PathBuf);
 
 impl CardPath {
-    fn from_path(path: &Path) -> Self {
-        let _ = AnnoCard::from_path(path);
-        Self(PathBuf::from(path))
+    fn new(card: &AnnoCard) -> Self {
+        Self(card.1.as_path())
+    }
+
+    fn as_ref(&self) -> &PathBuf {
+        &self.0
     }
 }
 
@@ -99,6 +160,13 @@ pub enum ReviewType {
 }
 
 impl AnnoCard {
+    pub fn print_by_strength() -> BTreeSet<CardAndRecall> {
+        Self::load_all()
+            .into_iter()
+            .filter_map(|card| CardAndRecall::from_card(&card))
+            .collect()
+    }
+
     pub fn get_review_type(&self) -> ReviewType {
         match (self.0.meta.stability, self.0.meta.finished) {
             (Some(_), true) => ReviewType::Normal,
@@ -281,13 +349,13 @@ impl Card {
         }
     }
 
-    pub fn recall_rate(&self) -> Option<f32> {
+    pub fn recall_rate(&self) -> Option<RecallRate> {
         let days_passed = self.time_since_last_review()?;
         let stability = self.meta.stability?;
         Some(Self::calculate_strength(days_passed, stability))
     }
 
-    fn calculate_strength(days_passed: Duration, stability: Duration) -> f32 {
+    fn calculate_strength(days_passed: Duration, stability: Duration) -> RecallRate {
         let base: f32 = 0.9;
         let ratio = days_passed.as_secs_f32() / stability.as_secs_f32();
         (base.ln() * ratio).exp()

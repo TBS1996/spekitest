@@ -202,17 +202,8 @@ impl Category {
             .collect()
     }
 
-    pub fn get_unfinished_cards(&self, recursion: bool) -> Vec<AnnoCard> {
-        match recursion {
-            true => {
-                let mut vec = vec![];
-                for cat in self.get_following_categories() {
-                    vec.extend(cat.get_cards_with_filter(Box::new(Card::unfinished_filter)));
-                }
-                vec
-            }
-            false => self.get_cards_with_filter(Box::new(Card::unfinished_filter)),
-        }
+    pub fn get_unfinished_cards(&self) -> Vec<AnnoCard> {
+        self.get_cards_with_filter(Box::new(Card::unfinished_filter))
     }
 
     pub fn get_pending_cards(&self) -> Vec<AnnoCard> {
