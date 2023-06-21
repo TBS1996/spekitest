@@ -1,8 +1,9 @@
 use crate::card::{AnnoCard, Card, CardFileData};
 use crate::folders::get_last_modified;
 use crate::paths::{self, get_cards_path};
-use std::fs;
-use std::io;
+use std::collections::BTreeSet;
+use std::fs::{self, File};
+use std::io::{self, BufRead};
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -10,7 +11,46 @@ use std::path::PathBuf;
 #[derive(Hash, Debug, Clone, Default, PartialEq)]
 pub struct Category(pub Vec<String>);
 
+fn read_lines<P>(filename: P) -> io::Result<Vec<String>>
+where
+    P: AsRef<Path>,
+{
+    let file = File::open(filename)?;
+    let reader = io::BufReader::new(file);
+    reader.lines().collect::<Result<_, _>>()
+}
+
 impl Category {
+    pub fn get_all_tags() -> BTreeSet<String> {
+        let cats = Category::get_following_categories(&Category::root());
+        let mut tags = BTreeSet::new();
+
+        for cat in cats {
+            let path = cat.as_path().join("tags");
+            if let Ok(lines) = read_lines(path) {
+                tags.extend(lines);
+            }
+        }
+        tags
+    }
+
+    pub fn get_tags(&self) -> BTreeSet<String> {
+        let mut tags = BTreeSet::new();
+        let mut cat = self.clone();
+
+        loop {
+            let path = cat.as_path().join("tags");
+            if let Ok(lines) = read_lines(path) {
+                tags.extend(lines);
+            }
+            if cat.0.is_empty() {
+                break;
+            }
+            cat.0.pop();
+        }
+        tags
+    }
+
     pub fn root() -> Self {
         Self::default()
     }

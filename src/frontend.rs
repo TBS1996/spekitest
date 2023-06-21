@@ -21,6 +21,7 @@ pub fn run() {
         "Settings",
         "Debug",
         "search",
+        "by tag",
     ];
 
     while let Some(choice) = draw_menu(&mut stdout, menu_items.clone(), true) {
@@ -86,6 +87,38 @@ pub fn run() {
                 if let Some(card) = card {
                     card.edit_with_vim();
                 }
+            }
+            6 => {
+                let revtype =
+                    match draw_menu(&mut stdout, vec!["Normal", "Pending", "Unfinished"], true) {
+                        Some(x) => x,
+                        None => continue,
+                    };
+
+                let category = match choose_folder(&mut stdout) {
+                    Some(category) => category,
+                    None => continue,
+                };
+
+                match revtype {
+                    0 => {
+                        review_cards(&mut stdout, category.clone());
+                        draw_message(&mut stdout, "now reviewing pending cards");
+                        review_pending_cards(&mut stdout, category.clone());
+                        draw_message(&mut stdout, "Now reviewing unfinished cards");
+                        review_unfinished_cards(&mut stdout, category.clone());
+                    }
+                    1 => {
+                        review_pending_cards(&mut stdout, category.clone());
+                        draw_message(&mut stdout, "Now reviewing unfinished cards");
+                        review_unfinished_cards(&mut stdout, category.clone());
+                    }
+                    2 => review_unfinished_cards(&mut stdout, category),
+                    _ => continue,
+                }
+
+                let has_remote = Config::load().unwrap().git_remote.is_some();
+                let _ = std::thread::spawn(move || git_save(has_remote));
             }
             _ => {}
         };
@@ -245,6 +278,16 @@ pub fn review_unfinished_cards(stdout: &mut Stdout, category: Category) {
                     None => continue,
                 }
             }
+            KeyCode::Char('g') => {
+                let tags = card.1.category.get_tags().into_iter().collect();
+                let tag = match pick_item(stdout, &tags) {
+                    Some(tag) => tag,
+                    None => continue,
+                };
+                card.0.meta.tags.push(tag.to_owned());
+                *card = card.update_card();
+            }
+
             KeyCode::Char('T') => {
                 draw_message(stdout, "Adding new dependent");
                 if let Some(updated_card) =
@@ -465,6 +508,10 @@ fn pick_item_with_formatter<'a, T, F>(
 where
     F: Fn(&T) -> String,
 {
+    if items.is_empty() {
+        draw_message(stdout, "list is empty");
+        return None;
+    }
     let mut selected = 0;
 
     loop {

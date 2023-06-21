@@ -82,6 +82,7 @@ impl VisitStuff for AnnoCard {
     }
 }
 
+/*
 impl Drop for AnnoCard {
     fn drop(&mut self) {
         if self.1.as_path().exists() {
@@ -89,8 +90,23 @@ impl Drop for AnnoCard {
         }
     }
 }
+*/
+
+pub enum ReviewType {
+    Normal,
+    Pending,
+    Unfinished,
+}
 
 impl AnnoCard {
+    pub fn get_review_type(&self) -> ReviewType {
+        match (self.0.meta.stability, self.0.meta.finished) {
+            (Some(_), true) => ReviewType::Normal,
+            (_, false) => ReviewType::Unfinished,
+            (None, true) => ReviewType::Pending,
+        }
+    }
+
     pub fn delete(self) {
         let path = self.full_path();
         std::fs::remove_file(path).unwrap();
