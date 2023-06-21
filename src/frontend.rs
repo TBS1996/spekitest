@@ -208,10 +208,10 @@ pub fn review_unfinished_cards(stdout: &mut Stdout, category: Category) {
         let mut card = &mut cards[selected];
         let get_message = |card: &AnnoCard| {
             format!(
-                "{}   {}/{}\n{}\n-------------------\n{}",
-                category.print_full(),
+                "{}/{}   {}\n{}\n-------------------\n{}",
                 selected + 1,
                 cardqty,
+                &card.1.category.print_full(),
                 card.0.front.text,
                 card.0.back.text
             )
@@ -220,8 +220,7 @@ pub fn review_unfinished_cards(stdout: &mut Stdout, category: Category) {
         match draw_message(stdout, &get_message(card)) {
             KeyCode::Char('f') => {
                 card.0.meta.finished = true;
-                let the_card = cards.remove(selected);
-                the_card.update_card();
+                cards.remove(selected);
                 selected = selected.saturating_sub(1);
             }
             KeyCode::Char('s') => {
@@ -290,7 +289,7 @@ pub fn review_pending_cards(stdout: &mut Stdout, category: Category) {
 
     for category in categories {
         let cards = category.get_pending_cards();
-        if rev_cards(stdout, cards, &category) {
+        if rev_cards(stdout, cards) {
             return;
         }
     }
@@ -339,12 +338,12 @@ fn print_card_review_full(stdout: &mut Stdout, card: &mut Card) {
     print_card_review_back(stdout, card, false);
 }
 
-fn rev_cards(stdout: &mut Stdout, mut cards: Vec<AnnoCard>, category: &Category) -> bool {
+fn rev_cards(stdout: &mut Stdout, mut cards: Vec<AnnoCard>) -> bool {
     let qty = cards.len();
 
     for (i, card) in cards.iter_mut().enumerate() {
         execute!(stdout, Clear(ClearType::All)).unwrap();
-        update_card_review_status(stdout, i, qty, category);
+        update_card_review_status(stdout, i, qty, &card.1.category);
         print_card_review_front(stdout, card.card_as_mut_ref(), true);
 
         if should_exit(&get_keycode()) {
@@ -361,7 +360,6 @@ fn rev_cards(stdout: &mut Stdout, mut cards: Vec<AnnoCard>, category: &Category)
                 }
                 'j' => {
                     card.0.meta.suspended = true;
-                    card.update_card();
                     draw_message(stdout, "card suspended");
                     break;
                 }
@@ -386,7 +384,7 @@ pub fn review_cards(stdout: &mut Stdout, category: Category) {
 
     for category in categories {
         let cards = category.get_review_cards();
-        if rev_cards(stdout, cards, &category) {
+        if rev_cards(stdout, cards) {
             return;
         }
     }

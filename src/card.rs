@@ -82,6 +82,14 @@ impl VisitStuff for AnnoCard {
     }
 }
 
+impl Drop for AnnoCard {
+    fn drop(&mut self) {
+        if self.1.as_path().exists() {
+            self.update_card();
+        }
+    }
+}
+
 impl AnnoCard {
     pub fn delete(self) {
         let path = self.full_path();
@@ -188,6 +196,7 @@ impl AnnoCard {
         path
     }
 
+    // Gets called automatically when object goes out of scope.
     pub fn update_card(&self) -> Self {
         let path = self.1.as_path();
         if !path.exists() {
