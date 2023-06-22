@@ -31,6 +31,7 @@ impl Category {
                 tags.extend(lines);
             }
         }
+        tags.remove("");
         tags
     }
 

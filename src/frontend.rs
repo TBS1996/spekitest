@@ -82,6 +82,9 @@ pub fn run() {
                         );
                     }
                     2 => {
+                        let cards = get_following_unfinished_cards(&category);
+                        view_cards(&mut stdout, cards);
+                        continue;
                         review_cards(
                             &mut stdout,
                             category.clone(),
@@ -115,6 +118,17 @@ pub fn run() {
                 }
             }
             6 => {
+                let tags: Vec<String> = Category::get_all_tags().into_iter().collect();
+                let tag = pick_item(&mut stdout, &tags);
+                if let Some(tag) = tag {
+                    let cards = AnnoCard::load_all()
+                        .into_iter()
+                        .filter(|card| card.0.meta.tags.contains(tag))
+                        .collect();
+                    view_cards(&mut stdout, cards);
+                }
+            }
+            7 => {
                 let mut cnt = 0;
                 let mut cards = AnnoCard::print_by_strength();
                 while let Some(card) = cards.pop_first() {
@@ -189,8 +203,11 @@ fn update_status_bar(stdout: &mut Stdout, msg: &str) {
 
 pub fn add_card(stdout: &mut Stdout, category: &Category) -> Option<AnnoCard> {
     execute!(stdout, Clear(ClearType::All)).unwrap();
-    execute!(stdout, MoveTo(0, 1)).unwrap();
-    update_status_bar(stdout, "--front side--");
+    execute!(stdout, MoveTo(0, 0)).unwrap();
+    let msg = format!("{}\n\t--front side--", category.print_full());
+
+    write_string(stdout, &msg);
+    execute!(stdout, MoveTo(0, 2)).unwrap();
     let mut key_code;
 
     let (front_text, code) = match read_user_input(stdout) {
@@ -203,7 +220,7 @@ pub fn add_card(stdout: &mut Stdout, category: &Category) -> Option<AnnoCard> {
     let back_text = if key_code != KeyCode::Tab {
         execute!(stdout, MoveDown(2)).unwrap();
         move_far_left(stdout);
-        println!("--back side--");
+        println!("\t--back side--");
         move_far_left(stdout);
 
         let (back_text, code) = match read_user_input(stdout) {
@@ -224,7 +241,7 @@ pub fn add_card(stdout: &mut Stdout, category: &Category) -> Option<AnnoCard> {
         card.meta.finished = false;
     }
 
-    Some(card.save_new_card(&category))
+    Some(card.save_new_card(category))
 }
 
 pub fn add_cards(stdout: &mut Stdout, category: Category) {
@@ -279,7 +296,7 @@ fn review_unfinished_card(stdout: &mut Stdout, card: &mut AnnoCard) -> SomeStatu
                     Some(tag) => tag,
                     None => continue,
                 };
-                card.0.meta.tags.push(tag.to_owned());
+                card.0.meta.tags.insert(tag.to_owned());
                 *card = card.update_card();
             }
 
@@ -371,7 +388,7 @@ pub fn review_unfinished_cards(stdout: &mut Stdout, category: Category) {
                     Some(tag) => tag,
                     None => continue,
                 };
-                card.0.meta.tags.push(tag.to_owned());
+                card.0.meta.tags.insert(tag.to_owned());
                 *card = card.update_card();
             }
 
@@ -510,6 +527,123 @@ fn review_card(stdout: &mut Stdout, card: &mut AnnoCard, status: String) -> Some
     SomeStatus::Continue
 }
 
+fn view_cards(stdout: &mut Stdout, mut cards: Vec<AnnoCard>) {
+    if cards.is_empty() {
+        draw_message(stdout, "No cards found");
+        return;
+    }
+
+    let mut selected = 0;
+
+    loop {
+        let card_qty = cards.len();
+        let mut card = &mut cards[selected];
+
+        let message = format!(
+            "{}/{}\t{}\n{}\n-------------------\n{}",
+            selected + 1,
+            card_qty,
+            card.1.category.print_full(),
+            card.0.front.text,
+            card.0.back.text
+        );
+
+        match draw_message(stdout, &message) {
+            KeyCode::Char('l') | KeyCode::Right if selected != card_qty - 1 => selected += 1,
+            KeyCode::Char('h') | KeyCode::Left if selected != 0 => selected -= 1,
+            KeyCode::Char('r') => {
+                cards.remove(selected);
+                if cards.is_empty() {
+                    draw_message(stdout, "No more cards");
+                    return;
+                }
+                if selected == cards.len() {
+                    selected -= 1;
+                }
+            }
+            KeyCode::Char('f') => {
+                card.0.meta.finished = true;
+                *card = card.clone().update_card();
+            }
+            KeyCode::Char('D') => {
+                card.clone().delete();
+                draw_message(stdout, "Card deleted");
+                cards.remove(selected);
+                if cards.is_empty() {
+                    draw_message(stdout, "No more cards");
+                    return;
+                }
+                if selected == cards.len() {
+                    selected -= 1;
+                }
+            }
+            KeyCode::Char('s') => {
+                card.0.meta.suspended = true;
+                *card = card.clone().update_card();
+                draw_message(stdout, "Card suspended");
+                cards.remove(selected);
+                if cards.is_empty() {
+                    draw_message(stdout, "No more cards");
+                    return;
+                }
+                if selected == cards.len() {
+                    selected -= 1;
+                }
+            }
+
+            KeyCode::Char('y') => {
+                *card = match pick_card_from_search(stdout) {
+                    Some(chosen_card) => {
+                        card.0.meta.dependencies.push(chosen_card.0.meta.id);
+                        card.update_card()
+                    }
+                    None => continue,
+                }
+            }
+            KeyCode::Char('t') => {
+                *card = match pick_card_from_search(stdout) {
+                    Some(chosen_card) => {
+                        card.0.meta.dependents.push(chosen_card.0.meta.id);
+                        card.update_card()
+                    }
+                    None => continue,
+                }
+            }
+            KeyCode::Char('g') => {
+                let tags = card.1.category.get_tags().into_iter().collect();
+                let tag = match pick_item(stdout, &tags) {
+                    Some(tag) => tag,
+                    None => continue,
+                };
+                card.0.meta.tags.insert(tag.to_owned());
+                *card = card.update_card();
+            }
+
+            KeyCode::Char('T') => {
+                draw_message(stdout, "Adding new dependent");
+                if let Some(updated_card) =
+                    add_dependent(stdout, card.to_owned(), Some(&card.1.category))
+                {
+                    *card = updated_card;
+                }
+            }
+            KeyCode::Char('Y') => {
+                draw_message(stdout, "Adding new dependency");
+                if let Some(updated_card) =
+                    add_dependency(stdout, card.to_owned(), Some(&card.1.category))
+                {
+                    *card = updated_card;
+                }
+            }
+            KeyCode::Char('e') => {
+                *card = card.edit_with_vim();
+            }
+            key if should_exit(&key) => return,
+            _ => {}
+        };
+    }
+}
+
 fn rev_cards(stdout: &mut Stdout, mut cards: Vec<AnnoCard>) -> bool {
     let qty = cards.len();
 
@@ -549,6 +683,15 @@ fn rev_cards(stdout: &mut Stdout, mut cards: Vec<AnnoCard>) -> bool {
         }
     }
     false
+}
+
+fn get_following_unfinished_cards(category: &Category) -> Vec<AnnoCard> {
+    let categories = category.get_following_categories();
+    let mut cards = vec![];
+    for category in categories {
+        cards.extend(category.get_unfinished_cards());
+    }
+    cards
 }
 
 pub fn review_cards(
@@ -611,17 +754,21 @@ pub fn get_char() -> char {
     }
 }
 
-pub fn draw_message(stdout: &mut Stdout, message: &str) -> KeyCode {
-    execute!(stdout, MoveTo(0, 0)).unwrap();
-
-    execute!(stdout, Clear(ClearType::All)).unwrap();
+/// Fixes the problem where printing a newline doesn't make the cursor go to the left
+fn write_string(stdout: &mut Stdout, message: &str) {
     for char in message.chars() {
         print!("{char}");
         if char == '\n' {
             move_far_left(stdout);
         }
     }
-    //println!("{}", message);
+}
+
+pub fn draw_message(stdout: &mut Stdout, message: &str) -> KeyCode {
+    execute!(stdout, MoveTo(0, 0)).unwrap();
+
+    execute!(stdout, Clear(ClearType::All)).unwrap();
+    write_string(stdout, message);
     execute!(stdout, ResetColor).unwrap();
 
     let pressed_char = get_keycode();

@@ -501,7 +501,7 @@ pub struct Meta {
         deserialize_with = "optional_days_to_duration"
     )]
     pub stability: Option<Duration>,
-    pub tags: Vec<String>,
+    pub tags: BTreeSet<String>,
 }
 
 impl Default for Meta {
@@ -513,7 +513,7 @@ impl Default for Meta {
             suspended: false,
             finished: true,
             stability: None,
-            tags: vec![],
+            tags: BTreeSet::new(),
         }
     }
 }
