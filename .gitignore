@@ -1,5 +1,6 @@
 /target
 cache.db
 /cards
+/.vscode
 .DS_Store
 test_dir/.DS_Store

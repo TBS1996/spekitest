@@ -1,5 +1,7 @@
 //! this will be about actually using the program like reviewing and all that
 
+pub mod review_cards;
+
 use std::fmt::Display;
 use std::io::{stdout, Stdout};
 
