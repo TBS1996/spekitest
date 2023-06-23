@@ -3,11 +3,13 @@
 use std::fmt::Display;
 use std::io::{stdout, Stdout};
 
-use crate::card::{AnnoCard, Card, CardAndRecall, ReviewType};
+use crate::card::{AnnoCard, Card, ReviewType};
 use crate::categories::Category;
+use crate::common::open_file_with_vim;
 use crate::config::Config;
 use crate::folders::view_cards_in_explorer;
 use crate::git::git_save;
+use crate::paths::get_share_path;
 
 pub fn run() {
     enable_raw_mode().unwrap();
@@ -22,12 +24,13 @@ pub fn run() {
         "Debug",
         "search",
         "by tag",
+        "notes",
     ];
 
     while let Some(choice) = draw_menu(&mut stdout, menu_items.clone(), true) {
         match choice {
             0 => {
-                let category = match choose_folder(&mut stdout) {
+                let category = match choose_folder(&mut stdout, "Choose folder to review from") {
                     Some(category) => category,
                     None => continue,
                 };
@@ -43,7 +46,7 @@ pub fn run() {
                         None => continue,
                     };
 
-                let category = match choose_folder(&mut stdout) {
+                let category = match choose_folder(&mut stdout, "Choose review type") {
                     Some(category) => category,
                     None => continue,
                 };
@@ -119,7 +122,7 @@ pub fn run() {
             }
             6 => {
                 let tags: Vec<String> = Category::get_all_tags().into_iter().collect();
-                let tag = pick_item(&mut stdout, &tags);
+                let tag = pick_item(&mut stdout, "Tag to filter by", &tags);
                 if let Some(tag) = tag {
                     let cards = AnnoCard::load_all()
                         .into_iter()
@@ -129,6 +132,10 @@ pub fn run() {
                 }
             }
             7 => {
+                let path = get_share_path().join("notes");
+                open_file_with_vim(path.as_path()).unwrap();
+            }
+            8 => {
                 let mut cnt = 0;
                 let mut cards = AnnoCard::print_by_strength();
                 while let Some(card) = cards.pop_first() {
@@ -159,6 +166,7 @@ pub fn read_user_input(stdout: &mut Stdout) -> Option<(String, KeyCode)> {
         if let Event::Key(event) = read().unwrap() {
             key_code = event.code;
             match event.code {
+                KeyCode::Char('`') => break,
                 KeyCode::Char(c) => {
                     input.push(c);
                     // You can decide whether to echo the input to the screen or not
@@ -201,52 +209,61 @@ fn update_status_bar(stdout: &mut Stdout, msg: &str) {
     execute!(stdout, cursor::MoveTo(pre_pos.0, pre_pos.1)).unwrap();
 }
 
-pub fn add_card(stdout: &mut Stdout, category: &Category) -> Option<AnnoCard> {
-    execute!(stdout, Clear(ClearType::All)).unwrap();
-    execute!(stdout, MoveTo(0, 0)).unwrap();
-    let msg = format!("{}\n\t--front side--", category.print_full());
+pub fn add_card(stdout: &mut Stdout, category: &mut Category) -> Option<AnnoCard> {
+    loop {
+        execute!(stdout, Clear(ClearType::All)).unwrap();
+        execute!(stdout, MoveTo(0, 0)).unwrap();
+        let msg = format!("{}\n\t--front side--", category.print_full());
 
-    write_string(stdout, &msg);
-    execute!(stdout, MoveTo(0, 2)).unwrap();
-    let mut key_code;
+        write_string(stdout, &msg);
+        execute!(stdout, MoveTo(0, 2)).unwrap();
+        let mut key_code;
 
-    let (front_text, code) = match read_user_input(stdout) {
-        Some((text, code)) => (text, code),
-        None => return None,
-    };
-
-    key_code = code;
-
-    let back_text = if key_code != KeyCode::Tab {
-        execute!(stdout, MoveDown(2)).unwrap();
-        move_far_left(stdout);
-        println!("\t--back side--");
-        move_far_left(stdout);
-
-        let (back_text, code) = match read_user_input(stdout) {
+        let (front_text, code) = match read_user_input(stdout) {
             Some((text, code)) => (text, code),
             None => return None,
         };
 
+        if code == KeyCode::Char('`') {
+            if let Some(the_category) = choose_folder(stdout, "Choose new category") {
+                *category = the_category;
+            }
+            continue;
+        }
+
         key_code = code;
 
-        back_text
-    } else {
-        String::new()
-    };
+        let back_text = if key_code != KeyCode::Tab {
+            execute!(stdout, MoveDown(2)).unwrap();
+            move_far_left(stdout);
+            println!("\t--back side--");
+            move_far_left(stdout);
 
-    let mut card = Card::new_simple(front_text, back_text);
+            let (back_text, code) = match read_user_input(stdout) {
+                Some((text, code)) => (text, code),
+                None => return None,
+            };
 
-    if key_code == KeyCode::Tab {
-        card.meta.finished = false;
+            key_code = code;
+
+            back_text
+        } else {
+            String::new()
+        };
+
+        let mut card = Card::new_simple(front_text, back_text);
+
+        if key_code == KeyCode::Tab {
+            card.meta.finished = false;
+        }
+
+        return Some(card.save_new_card(category));
     }
-
-    Some(card.save_new_card(category))
 }
 
-pub fn add_cards(stdout: &mut Stdout, category: Category) {
+pub fn add_cards(stdout: &mut Stdout, mut category: Category) {
     loop {
-        if add_card(stdout, &category).is_none() {
+        if add_card(stdout, &mut category).is_none() {
             return;
         }
     }
@@ -292,7 +309,7 @@ fn review_unfinished_card(stdout: &mut Stdout, card: &mut AnnoCard) -> SomeStatu
             }
             KeyCode::Char('g') => {
                 let tags = card.1.category.get_tags().into_iter().collect();
-                let tag = match pick_item(stdout, &tags) {
+                let tag = match pick_item(stdout, "Choose tag", &tags) {
                     Some(tag) => tag,
                     None => continue,
                 };
@@ -384,7 +401,7 @@ pub fn review_unfinished_cards(stdout: &mut Stdout, category: Category) {
             }
             KeyCode::Char('g') => {
                 let tags = card.1.category.get_tags().into_iter().collect();
-                let tag = match pick_item(stdout, &tags) {
+                let tag = match pick_item(stdout, "Choose tag", &tags) {
                     Some(tag) => tag,
                     None => continue,
                 };
@@ -611,7 +628,7 @@ fn view_cards(stdout: &mut Stdout, mut cards: Vec<AnnoCard>) {
             }
             KeyCode::Char('g') => {
                 let tags = card.1.category.get_tags().into_iter().collect();
-                let tag = match pick_item(stdout, &tags) {
+                let tag = match pick_item(stdout, "Choose tag", &tags) {
                     Some(tag) => tag,
                     None => continue,
                 };
@@ -778,22 +795,28 @@ pub fn draw_message(stdout: &mut Stdout, message: &str) -> KeyCode {
     pressed_char
 }
 
-fn choose_folder(stdout: &mut Stdout) -> Option<Category> {
+fn choose_folder(stdout: &mut Stdout, message: &str) -> Option<Category> {
     pick_item_with_formatter(
         stdout,
+        message,
         &Category::load_all().unwrap(),
         Category::print_it_with_depth,
     )
     .cloned()
 }
 
-fn pick_item<'a, T: Display>(stdout: &mut Stdout, items: &'a Vec<T>) -> Option<&'a T> {
+fn pick_item<'a, T: Display>(
+    stdout: &mut Stdout,
+    message: &str,
+    items: &'a Vec<T>,
+) -> Option<&'a T> {
     let formatter = |item: &T| format!("{}", item);
-    pick_item_with_formatter(stdout, items, formatter)
+    pick_item_with_formatter(stdout, message, items, formatter)
 }
 
 fn pick_item_with_formatter<'a, T, F>(
     stdout: &mut Stdout,
+    message: &str,
     items: &'a Vec<T>,
     formatter: F,
 ) -> Option<&'a T>
@@ -808,9 +831,11 @@ where
 
     loop {
         execute!(stdout, Clear(ClearType::All)).unwrap();
+        execute!(stdout, MoveTo(0, 0)).unwrap();
+        print!("{}", message);
 
         for (index, item) in items.iter().enumerate() {
-            execute!(stdout, MoveTo(0, index as u16)).unwrap();
+            execute!(stdout, MoveTo(0, (index + 1) as u16)).unwrap();
 
             if index == selected {
                 execute!(stdout, SetForegroundColor(crossterm::style::Color::Blue)).unwrap();
@@ -887,13 +912,13 @@ pub fn view_last_modified_cards(stdout: &mut Stdout) -> Option<AnnoCard> {
     let mut cards = AnnoCard::load_all();
     AnnoCard::sort_by_last_modified(&mut cards);
     cards.truncate(10);
-    pick_item(stdout, &cards).cloned()
+    pick_item(stdout, "", &cards).cloned()
 }
 
 pub fn view_search_cards(stdout: &mut Stdout, searchterm: String) -> Option<AnnoCard> {
     let mut cards = AnnoCard::search(searchterm);
     cards.truncate(10);
-    pick_item(stdout, &cards).cloned()
+    pick_item(stdout, "", &cards).cloned()
 }
 
 pub fn add_dependency(
@@ -902,6 +927,7 @@ pub fn add_dependency(
     category: Option<&Category>,
 ) -> Option<AnnoCard> {
     let category = category.unwrap_or(&card.1.category);
+    let category = &mut category.to_owned();
     let new_dependency = add_card(stdout, category)?;
     card.0.meta.dependencies.push(new_dependency.0.meta.id);
     Some(card.update_card())
@@ -912,8 +938,8 @@ pub fn add_dependent(
     mut card: AnnoCard,
     category: Option<&Category>,
 ) -> Option<AnnoCard> {
-    let category = category.cloned().unwrap_or_else(|| card.1.category.clone());
-    let new_dependent = add_card(stdout, &category)?;
+    let mut category = category.cloned().unwrap_or_else(|| card.1.category.clone());
+    let new_dependent = add_card(stdout, &mut category)?;
     card.0.meta.dependents.push(new_dependent.0.meta.id);
     Some(card.update_card())
 }
@@ -921,5 +947,5 @@ pub fn add_dependent(
 pub fn pick_card_from_search(stdout: &mut Stdout) -> Option<AnnoCard> {
     let input = read_user_input(stdout)?;
     let cards = AnnoCard::search(input.0);
-    pick_item(stdout, &cards).cloned()
+    pick_item(stdout, "", &cards).cloned()
 }

@@ -86,6 +86,19 @@ impl CardPath {
     }
 }
 
+pub struct CardLocation {
+    file_name: OsString,
+    category: Category,
+}
+
+impl CardLocation {
+    fn as_path(&self) -> PathBuf {
+        let mut path = self.category.as_path().join(self.file_name.clone());
+        path.set_extension("toml");
+        path
+    }
+}
+
 #[derive(Hash, Clone)]
 pub struct CardFileData {
     pub file_name: OsString,
@@ -160,6 +173,16 @@ pub enum ReviewType {
 }
 
 impl AnnoCard {
+    pub fn move_card(self, category: &Category) -> Self {
+        if self.1.category == *category {
+            return self;
+        }
+        assert!(self.1.as_path().exists());
+        std::fs::remove_file(self.1.as_path()).unwrap();
+        assert!(!self.1.as_path().exists());
+        self.into_card().save_new_card(category)
+    }
+
     pub fn print_by_strength() -> BTreeSet<CardAndRecall> {
         Self::load_all()
             .into_iter()
