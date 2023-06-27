@@ -22,7 +22,54 @@ pub fn move_upper_left(stdout: &mut Stdout) {
     execute!(stdout, MoveTo(0, 0)).unwrap()
 }
 
-pub fn print_cool_graph(stdout: &mut Stdout) {
+pub fn view_dependencies(stdout: &mut Stdout, card: &mut AnnoCard, cache: &mut CardLocationCache) {
+    let mut msg = String::from("Dependents:\n");
+
+    let dependents = card.get_dependents(cache);
+    for dep in dependents {
+        msg.push_str(&format!(
+            "   {}\tfinished: {}\n",
+            truncate_string(dep.card.front.text, 50),
+            dep.card.meta.finished,
+        ));
+    }
+    msg.push('\n');
+    msg.push('\n');
+
+    let dependencies = card.get_dependencies(cache);
+    msg.push_str("Dependencies:\n");
+    for dep in dependencies {
+        msg.push_str(&format!(
+            "   {}\tfinished: {}\n",
+            truncate_string(dep.card.front.text, 50),
+            dep.card.meta.finished,
+        ));
+    }
+
+    draw_message(stdout, &msg);
+}
+
+pub fn print_cool_graph(stdout: &mut Stdout, data: Vec<f64>, message: &str) {
+    let (width, height) = crossterm::terminal::size().unwrap();
+
+    clear_window(stdout);
+    move_upper_left(stdout);
+
+    let mut output = rasciigraph::plot(
+        data,
+        rasciigraph::Config::default()
+            .with_height(height as u32 - 4)
+            .with_caption("------------------------------lol------------------------".into()),
+    );
+
+    let output = format!("{}\n_____________\n{}", message, output);
+
+    write_string(stdout, &output);
+
+    read().unwrap();
+}
+
+pub fn print_cool_graphs(stdout: &mut Stdout) {
     let all_cards = AnnoCard::load_all();
 
     let mut vec = vec![0; 50];
@@ -43,26 +90,7 @@ pub fn print_cool_graph(stdout: &mut Stdout) {
 
     let newvec = vec.into_iter().map(|num| num as f64).collect();
 
-    let (width, height) = crossterm::terminal::size().unwrap();
-
-    clear_window(stdout);
-    move_upper_left(stdout);
-
-    let mut output = rasciigraph::plot(
-        newvec,
-        rasciigraph::Config::default()
-            .with_height(height as u32 - 4)
-            .with_caption("------------------------------lol------------------------".into()),
-    );
-
-    let output = format!(
-        "\t\t\t__________Stability distribution_____________\n{}",
-        output
-    );
-
-    write_string(stdout, &output);
-
-    read().unwrap();
+    print_cool_graph(stdout, newvec, "Stability distribution");
 
     let mut rev_vec = vec![0; 50];
 
@@ -82,28 +110,7 @@ pub fn print_cool_graph(stdout: &mut Stdout) {
     }
 
     let rev_vec: Vec<f64> = rev_vec.into_iter().map(|num| num as f64).collect();
-    //rev_vec.insert(0, 0.);
-
-    let (_, height) = crossterm::terminal::size().unwrap();
-
-    clear_window(stdout);
-    move_upper_left(stdout);
-
-    let output = rasciigraph::plot(
-        rev_vec,
-        rasciigraph::Config::default()
-            .with_height(height as u32 - 4)
-            .with_caption("------------------------------lol------------------------".into()),
-    );
-
-    let output = format!(
-        "\t\t\t__________Review distribution_____________\n{}",
-        output
-    );
-
-    write_string(stdout, &output);
-
-    read().unwrap();
+    print_cool_graph(stdout, rev_vec, "Review distribution");
 
     let mut vec = vec![0; 1000];
     let mut accum = vec![];
@@ -128,28 +135,24 @@ pub fn print_cool_graph(stdout: &mut Stdout) {
 
     let newvec = vec.into_iter().map(|num| num as f64).collect();
 
-    let (width, height) = crossterm::terminal::size().unwrap();
-
-    clear_window(stdout);
-    move_upper_left(stdout);
-
-    accum.sort();
-
-    let mut output = rasciigraph::plot(
+    print_cool_graph(
+        stdout,
         newvec,
-        rasciigraph::Config::default()
-            .with_height(height as u32 - 4)
-            .with_caption("------------------------------lol------------------------".into()),
+        &format!("Strength distribution\ttot: {}", tot_strength),
     );
 
-    let output = format!(
-        "\t\t\t__________Strength distribution, total: {}_____________\n{}",
-        tot_strength, output
-    );
+    let mut recall_vec = vec![];
+    for card in &all_cards {
+        if let Some(recall) = card.card.recall_rate() {
+            recall_vec.push((recall * 100.) as i32);
+        }
+    }
 
-    write_string(stdout, &output);
+    recall_vec.sort_by(|a, b| b.cmp(a));
+    recall_vec.retain(|num| *num % 2 == 0);
+    let recall_vec = recall_vec.into_iter().map(|n| n as f64).collect();
 
-    read().unwrap();
+    print_cool_graph(stdout, recall_vec, "Recall distribution");
 }
 
 pub fn card_options(stdout: &mut Stdout, card: &mut AnnoCard, cache: &mut CardLocationCache) {
@@ -204,31 +207,7 @@ pub fn card_options(stdout: &mut Stdout, card: &mut AnnoCard, cache: &mut CardLo
                     None => continue,
                 }
             }
-            4 => {
-                let dependencies = card.get_dependencies(cache);
-                let mut msg = String::from("Dependencies:\n");
-                for dep in dependencies {
-                    msg.push_str(&format!(
-                        "   {}\tfinished: {}\n",
-                        truncate_string(dep.card.front.text, 50),
-                        dep.card.meta.finished,
-                    ));
-                }
-                msg.push('\n');
-                msg.push('\n');
-                msg.push_str("Dependents:\n");
-
-                let dependents = card.get_dependents(cache);
-                for dep in dependents {
-                    msg.push_str(&format!(
-                        "   {}\tfinished: {}\n",
-                        truncate_string(dep.card.front.text, 50),
-                        dep.card.meta.finished,
-                    ));
-                }
-
-                draw_message(stdout, &msg);
-            }
+            4 => view_dependencies(stdout, card, cache),
 
             _ => panic!(),
         }
@@ -334,7 +313,7 @@ pub fn run() {
                 open_file_with_vim(path.as_path()).unwrap();
             }
             8 => {
-                print_cool_graph(&mut stdout);
+                print_cool_graphs(&mut stdout);
             }
             _ => {}
         };
@@ -871,19 +850,7 @@ fn view_cards(stdout: &mut Stdout, mut cards: Vec<AnnoCard>, cache: &mut CardLoc
                     selected -= 1;
                 }
             }
-            KeyCode::Char('s') => {
-                card.card.meta.suspended = true;
-                *card = card.clone().update_card();
-                draw_message(stdout, "Card suspended");
-                cards.remove(selected);
-                if cards.is_empty() {
-                    draw_message(stdout, "No more cards");
-                    return;
-                }
-                if selected == cards.len() {
-                    selected -= 1;
-                }
-            }
+            KeyCode::Char('s') => {}
 
             KeyCode::Char('g') => {
                 let tags = card.location.category.get_tags().into_iter().collect();
@@ -916,6 +883,21 @@ fn view_cards(stdout: &mut Stdout, mut cards: Vec<AnnoCard>, cache: &mut CardLoc
                 ) {
                     *card = updated_card;
                 }
+            }
+            KeyCode::Char('y') => {
+                if let Some(chosen_card) = pick_card_from_search(stdout) {
+                    card.set_dependency(&chosen_card.card.meta.id);
+                }
+                continue;
+            }
+            KeyCode::Char('t') => {
+                if let Some(chosen_card) = pick_card_from_search(stdout) {
+                    card.set_dependent(&chosen_card.card.meta.id);
+                }
+                continue;
+            }
+            KeyCode::Char('v') => {
+                view_dependencies(stdout, card, cache);
             }
             KeyCode::Char('m') => {
                 let folder = match choose_folder(stdout, "Move card to...") {
@@ -1034,7 +1016,7 @@ pub fn review_cards(
                 }
             }
         }
-        if !cards_found {
+        if true {
             return;
         }
     }
