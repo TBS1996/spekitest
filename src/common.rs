@@ -127,7 +127,7 @@ fn visit_collect_all_descendants_inner<T: Sized + Clone + PartialEq + Debug>(
             descendants.push(kid.to_owned());
             visit_collect_all_descendants_inner(kid.clone(), descendants, get_children, cache)?;
         } else {
-            return Err(kid.to_owned());
+            //return Err(kid.to_owned());
         }
     }
     Ok(())

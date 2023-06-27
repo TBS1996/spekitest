@@ -1,4 +1,5 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de};
+use toml::Value;
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BTreeSet, HashMap};
 use std::ffi::OsString;
@@ -53,7 +54,7 @@ impl CardCache{
                 return Some(card);
             } else {
                 match AnnoCard::from_id(id) {
-                    Some(card) =>  {
+                    Some(_card) =>  {
                         
                     }
                     None => return None,
@@ -160,7 +161,7 @@ impl From<AnnoCard> for Card {
 
 impl VisitStuff for AnnoCard {
     fn get_children(&self) -> Vec<Self> {
-        AnnoCard::from_ids(self.card.meta.dependencies.clone())
+        AnnoCard::from_ids(self.card.meta.dependencies.clone().into_iter().collect())
     }
 
     fn matches_predicate(&self) -> bool {
@@ -189,30 +190,32 @@ type GetIds = Box<dyn FnMut(Id) -> Vec<Id>>;
 impl AnnoCard {
     
     pub fn set_dependent(&mut self, id: &Id) {
-        self.card.meta.dependents.push(*id);
+        self.card.meta.dependents.insert(*id);
         self.update_card();
         
         let mut other_card = Self::from_id(id).unwrap();
-        other_card.card.meta.dependencies.push(*id);
+        other_card.card.meta.dependencies.insert(*id);
         other_card.update_card();
     }
 
     pub fn set_dependency(&mut self, id: &Id) {
-        self.card.meta.dependencies.push(*id);
+        self.card.meta.dependencies.insert(*id);
         self.update_card();
         
         let mut other_card = Self::from_id(id).unwrap();
-        other_card.card.meta.dependents.push(*id);
+        other_card.card.meta.dependents.insert(*id);
         other_card.update_card();
     }
     
 
-    pub fn get_dependencies(& self, cache: & mut CardLocationCache) -> Vec<Self> {
+    pub fn get_dependencies(& self, cache: &mut CardLocationCache) -> Vec<Self> {
         let mut get_children: Box<dyn FnMut(Id, &mut CardLocationCache) -> Vec<Id>> = Box::new(|card_id: Id, cache: &mut CardLocationCache| {
             AnnoCard::from_cached_id(&card_id, cache)
                 .card
                 .meta
                 .dependencies
+                .into_iter()
+                .collect()
         });
         let ids = match visit_collect_all_descendants(self.card.meta.id, &mut get_children, cache)  {
             Ok(ids) => ids,
@@ -236,6 +239,8 @@ impl AnnoCard {
                 .card
                 .meta
                 .dependents
+                .into_iter()
+                .collect()
         });
         
         let ids = match visit_collect_all_descendants(self.card.meta.id, &mut get_children, cache)  {
@@ -265,20 +270,20 @@ impl AnnoCard {
 
     pub fn pending_filter(&self, cache: &mut CardLocationCache) -> bool {
         self.card.meta.stability.is_none()
-            && !self.card.meta.suspended
+            && self.card.meta.suspended.is_suspended()
             && self.card.meta.finished
             && self.is_confidently_resolved(cache)
     }
 
     pub fn unfinished_filter(&self, cache: &mut CardLocationCache) -> bool {
-        !self.card.meta.finished && !self.card.meta.suspended && self.is_resolved(cache)
+        !self.card.meta.finished && !self.card.meta.suspended.is_suspended() && self.is_resolved(cache)
     }
 
     pub fn review_filter(&self, cache: &mut CardLocationCache) -> bool {
         match (self.card.meta.stability, self.card.time_since_last_review()) {
             (Some(stability), Some(last_review_time)) => {
                 self.card.meta.finished
-                    && !self.card.meta.suspended
+                    && self.card.meta.suspended == IsSuspended::False
                     && last_review_time > Duration::from_secs(60) // Lets not review if its less than a minute since last time
                     && stability < last_review_time
                     && self.is_confidently_resolved(cache)
@@ -379,6 +384,22 @@ impl AnnoCard {
         Self::sort_by_last_modified(&mut cards);
         cards
     }
+    
+        
+    pub fn search_in_cards<'a>(input: &'a str, cards: &'a Vec<AnnoCard>) -> Vec<&'a AnnoCard> {
+        cards
+        .iter()
+        .filter(|card| {
+            card.card.front.text.to_ascii_lowercase().contains(&input.to_ascii_lowercase())
+                || card.card.back.text.to_ascii_lowercase().contains(&input.to_ascii_lowercase())
+        })
+        .collect()
+}
+
+
+
+
+    
 
     pub fn from_ids(ids: Vec<Id>) -> Vec<Self> {
         let mut vec = vec![];
@@ -655,12 +676,106 @@ pub struct Side {
     //pub image: ImagePath,
 }
 
+use serde::de::{Deserializer};
+
+#[derive(Hash, Debug, Clone, PartialEq)]
+pub enum IsSuspended{
+    False,
+    True,
+    TrueUntil(Duration),
+}
+
+impl From<bool> for IsSuspended{
+    fn from(value: bool) -> Self {
+        match value {
+            true => Self::True,
+            false => Self::False,
+        }
+    }
+}
+
+impl IsSuspended{
+    
+    fn verify_time(self) -> Self {
+        if let Self::TrueUntil(dur) = self {
+            if dur < current_time() {
+                return Self::False;
+            }
+        }
+        self
+    }
+
+    pub fn is_suspended(&self) -> bool {
+        if let IsSuspended::False = self {
+            return false;
+        }
+        true
+    }
+
+    // prefer this if you have mutable reference
+    pub fn is_suspended_mut(&mut self) -> bool {
+        match self {
+            IsSuspended::False => false,
+            IsSuspended::True => true,
+            IsSuspended::TrueUntil(dur) => {
+                let now = current_time();
+                if now > *dur {
+                    *self = Self::False;
+                     false
+                } else {
+                    true
+                }
+            },
+        }
+    }
+}
+
+impl Serialize for IsSuspended {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        match self.clone().verify_time() {
+            IsSuspended::False => serializer.serialize_bool(false),
+            IsSuspended::True => serializer.serialize_bool(true),
+            IsSuspended::TrueUntil(duration) => serializer.serialize_u64(duration.as_secs()),
+        }
+    }
+}
+
+
+
+impl<'de> Deserialize<'de> for IsSuspended {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value: Value = Deserialize::deserialize(deserializer)?;
+
+        match value {
+            Value::Boolean(b) => Ok(b.into()),
+                        Value::Integer(i) => {
+                if let Ok(secs) = std::convert::TryInto::<u64>::try_into(i) {
+                    Ok(IsSuspended::TrueUntil(Duration::from_secs(secs)).verify_time())
+                } else {
+                    Err(de::Error::custom("Invalid duration format"))
+                }
+            },
+
+            _ => Err(serde::de::Error::custom("Invalid value for IsDisabled")),
+        }
+    }
+}
+
+
+
+
 #[derive(Hash, Deserialize, Serialize, Debug, Clone)]
 pub struct Meta {
     pub id: Id,
-    pub dependencies: Vec<Id>,
-    pub dependents: Vec<Id>,
-    pub suspended: bool,
+    pub dependencies: BTreeSet<Id>,
+    pub dependents: BTreeSet<Id>,
+    pub suspended: IsSuspended,
     pub finished: bool,
     #[serde(
         default,
@@ -675,9 +790,9 @@ impl Default for Meta {
     fn default() -> Self {
         Self {
             id: Uuid::new_v4(),
-            dependencies: vec![],
-            dependents: vec![],
-            suspended: false,
+            dependencies: BTreeSet::new(),
+            dependents: BTreeSet::new(),
+            suspended: IsSuspended::False,
             finished: true,
             stability: None,
             tags: BTreeSet::new(),
