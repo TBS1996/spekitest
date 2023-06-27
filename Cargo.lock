@@ -750,6 +750,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rasciigraph"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "89a3273d76a0cdbb09ecead2f6007d6d169211f3c9c6dd30cd8a2e8175adcb74"
+
+[[package]]
 name = "raw-window-handle"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1022,6 +1028,7 @@ dependencies = [
  "csv",
  "dirs",
  "insta",
+ "rasciigraph",
  "rodio",
  "serde",
  "toml",

@@ -1,4 +1,4 @@
-use crate::card::{AnnoCard, Card, CardFileData};
+use crate::card::{AnnoCard, CardLocation, CardLocationCache};
 use crate::folders::get_last_modified;
 use crate::paths::{self, get_cards_path};
 use std::collections::BTreeSet;
@@ -87,14 +87,14 @@ impl Category {
 
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("toml") {
                 let card = AnnoCard::from_path(path.as_path()).into_card();
-                let full_card = AnnoCard(
+                let location = CardLocation::new(&path);
+                let last_modified = get_last_modified(path);
+
+                let full_card = AnnoCard {
                     card,
-                    CardFileData {
-                        file_name: path.file_name().unwrap().to_owned(),
-                        category: self.to_owned(),
-                        last_modified: get_last_modified(path),
-                    },
-                );
+                    location,
+                    last_modified,
+                };
                 cards.push(full_card);
             }
         }
@@ -196,23 +196,27 @@ impl Category {
         path
     }
 
-    fn get_cards_with_filter(&self, mut filter: Box<dyn FnMut(&Card) -> bool>) -> Vec<AnnoCard> {
+    fn get_cards_with_filter(
+        &self,
+        mut filter: Box<dyn FnMut(&AnnoCard, &mut CardLocationCache) -> bool>,
+        cache: &mut CardLocationCache,
+    ) -> Vec<AnnoCard> {
         self.get_containing_cards()
             .into_iter()
-            .filter(|card| filter(card.card_as_ref()))
+            .filter(|card| filter(card, cache))
             .collect()
     }
 
-    pub fn get_unfinished_cards(&self) -> Vec<AnnoCard> {
-        self.get_cards_with_filter(Box::new(Card::unfinished_filter))
+    pub fn get_unfinished_cards(&self, cache: &mut CardLocationCache) -> Vec<AnnoCard> {
+        self.get_cards_with_filter(Box::new(AnnoCard::unfinished_filter), cache)
     }
 
-    pub fn get_pending_cards(&self) -> Vec<AnnoCard> {
-        self.get_cards_with_filter(Box::new(Card::pending_filter))
+    pub fn get_pending_cards(&self, cache: &mut CardLocationCache) -> Vec<AnnoCard> {
+        self.get_cards_with_filter(Box::new(AnnoCard::pending_filter), cache)
     }
 
-    pub fn get_review_cards(&self) -> Vec<AnnoCard> {
-        self.get_cards_with_filter(Box::new(Card::review_filter))
+    pub fn get_review_cards(&self, cache: &mut CardLocationCache) -> Vec<AnnoCard> {
+        self.get_cards_with_filter(Box::new(AnnoCard::review_filter), cache)
     }
 }
 

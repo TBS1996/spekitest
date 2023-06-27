@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BTreeSet, HashMap};
 use std::ffi::OsString;
-use std::fmt::Display;
 use std::fs::read_to_string;
 use std::path::{Path, PathBuf};
 
@@ -18,80 +17,92 @@ use crate::{common::current_time, Id};
 pub type StrengthMap = HashMap<AnnoCard, Option<f32>>;
 pub type RecallRate = f32;
 
-pub struct CardAndRecall {
-    card_path: CardPath,
-    recall_rate: RecallRate,
-}
 
-impl CardAndRecall {
-    fn from_card(card: &AnnoCard) -> Option<Self> {
-        let card_path = CardPath::new(card);
-        let recall_rate = card.0.recall_rate()?;
-        Self {
-            card_path,
-            recall_rate,
+
+#[derive(Default)]
+pub struct CardCache(pub HashMap<Id, AnnoCard>);
+
+impl CardCache{
+   pub fn new() -> Self {
+       let mut cache = Self::default();
+       cache.cache_all();
+       cache
+   } 
+
+    fn cache_all(&mut self) {
+        let all_cards = AnnoCard::load_all();
+        for card in all_cards{
+            self.cache_one(card);
         }
-        .into()
+    }
+    
+    fn cache_one(&mut self, card: AnnoCard) {
+        self.0.insert(card.card.meta.id, card);
+    }
+    
+    pub fn find_updated_card(&mut self, id: &Id) -> Option<(&AnnoCard, bool)> {
+        if let Some(card) = self.0.get(id) {
+            return Some((card, card.is_outdated()));
+        }
+        None
+    }
+    
+    pub fn get_or_fetch(&mut self, id: &Id) -> Option<&AnnoCard>{
+        if let Some((card, is_outdated)) = self.find_updated_card(id) {
+            if !is_outdated{
+                return Some(card);
+            } else {
+                match AnnoCard::from_id(id) {
+                    Some(card) =>  {
+                        
+                    }
+                    None => return None,
+                }
+            }
+
+        }
+        
+        None
+        
     }
 }
 
-impl Display for CardAndRecall {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}: {}%",
-            self.card_path
-                .as_ref()
-                .file_name()
-                .unwrap()
-                .to_string_lossy(),
-            self.recall_rate
-        )
+
+#[derive(Default)]
+pub struct CardLocationCache(pub HashMap<Id, CardLocation>);
+
+impl CardLocationCache {
+   pub fn new() -> Self {
+       let mut cache = Self::default();
+       cache.cache_all();
+       cache
+   } 
+
+    fn cache_all(&mut self) {
+        let all_cards = AnnoCard::load_all();
+        for card in all_cards{
+            self.cache_one(&card);
+        }
+    }
+    
+    fn cache_one(&mut self, card: &AnnoCard) {
+        self.0.insert(card.card.meta.id, card.location.clone());
     }
 }
 
-impl Eq for CardAndRecall {}
-
-impl PartialEq for CardAndRecall {
-    fn eq(&self, other: &Self) -> bool {
-        self.recall_rate == other.recall_rate
-    }
-}
-
-impl Ord for CardAndRecall {
-    fn cmp(&self, other: &Self) -> Ordering {
-        // This will order by recall rate in ascending order
-        // Use `cmp` function to order in descending order
-        self.recall_rate
-            .partial_cmp(&other.recall_rate)
-            .unwrap_or(Ordering::Equal)
-    }
-}
-
-impl PartialOrd for CardAndRecall {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-pub struct CardPath(PathBuf);
-
-impl CardPath {
-    fn new(card: &AnnoCard) -> Self {
-        Self(card.1.as_path())
-    }
-
-    fn as_ref(&self) -> &PathBuf {
-        &self.0
-    }
-}
-
+#[derive(Hash, Clone, Debug)]
 pub struct CardLocation {
-    file_name: OsString,
-    category: Category,
+    pub file_name: OsString,
+    pub category: Category,
 }
 
 impl CardLocation {
+    pub fn new(path: &Path) -> Self {
+        let file_name = path.file_name().unwrap().to_owned();
+        let category = Category::from_card_path(path);
+        Self {file_name, category}
+    }
+
     fn as_path(&self) -> PathBuf {
         let mut path = self.category.as_path().join(self.file_name.clone());
         path.set_extension("toml");
@@ -101,36 +112,37 @@ impl CardLocation {
 
 #[derive(Hash, Clone)]
 pub struct CardFileData {
-    pub file_name: OsString,
-    pub category: Category,
     pub last_modified: Duration,
+    pub location: CardLocation,
 }
 
 impl CardFileData {
     pub fn from_path(path: &Path) -> Self {
-        let file_name = path.file_name().unwrap().to_owned();
-        let category = Category::from_card_path(path);
+
         let last_modified = {
             let system_time = std::fs::metadata(path).unwrap().modified().unwrap();
             system_time_as_unix_time(system_time)
         };
+        let location = CardLocation::new(path);
 
         Self {
-            file_name,
-            category,
             last_modified,
+            location
         }
     }
 
     pub fn as_path(&self) -> PathBuf {
-        let mut path = self.category.as_path().join(&self.file_name);
-        path.set_extension("toml");
-        path
+        self.location.as_path()
     }
 }
 
-#[derive(Clone, Hash)]
-pub struct AnnoCard(pub Card, pub CardFileData);
+#[derive(Clone, Hash, Debug)]
+pub struct AnnoCard {
+    pub card: Card,
+    pub location: CardLocation,
+    pub last_modified: Duration,
+}
+
 
 impl std::fmt::Display for AnnoCard {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -142,17 +154,17 @@ pub struct CardWithRecall(pub AnnoCard, Option<f32>);
 
 impl From<AnnoCard> for Card {
     fn from(value: AnnoCard) -> Self {
-        value.0
+        value.card
     }
 }
 
 impl VisitStuff for AnnoCard {
     fn get_children(&self) -> Vec<Self> {
-        AnnoCard::from_ids(self.0.meta.dependencies.clone())
+        AnnoCard::from_ids(self.card.meta.dependencies.clone())
     }
 
     fn matches_predicate(&self) -> bool {
-        !self.0.meta.finished
+        !self.card.meta.finished
     }
 }
 
@@ -172,34 +184,169 @@ pub enum ReviewType {
     Unfinished,
 }
 
+type GetIds = Box<dyn FnMut(Id) -> Vec<Id>>;
+
 impl AnnoCard {
-    pub fn move_card(self, category: &Category) -> Self {
-        if self.1.category == *category {
+    
+    pub fn set_dependent(&mut self, id: &Id) {
+        self.card.meta.dependents.push(*id);
+        self.update_card();
+        
+        let mut other_card = Self::from_id(id).unwrap();
+        other_card.card.meta.dependencies.push(*id);
+        other_card.update_card();
+    }
+
+    pub fn set_dependency(&mut self, id: &Id) {
+        self.card.meta.dependencies.push(*id);
+        self.update_card();
+        
+        let mut other_card = Self::from_id(id).unwrap();
+        other_card.card.meta.dependents.push(*id);
+        other_card.update_card();
+    }
+    
+
+    pub fn get_dependencies(& self, cache: & mut CardLocationCache) -> Vec<Self> {
+        let mut get_children: Box<dyn FnMut(Id, &mut CardLocationCache) -> Vec<Id>> = Box::new(|card_id: Id, cache: &mut CardLocationCache| {
+            AnnoCard::from_cached_id(&card_id, cache)
+                .card
+                .meta
+                .dependencies
+        });
+        let ids = match visit_collect_all_descendants(self.card.meta.id, &mut get_children, cache)  {
+            Ok(ids) => ids,
+            Err(id) => {
+                let card = AnnoCard::from_id(&id).unwrap();
+                panic!("Infinite recursion found with: {:?}", card);
+            }
+        };
+
+        let mut hey = vec![];
+
+        for id in ids {
+            hey.push(AnnoCard::from_id(&id).unwrap());
+        }
+        hey
+    }
+
+    pub fn get_dependents(&self, cache: &mut CardLocationCache) -> Vec<Self> {
+        let mut get_children: Box<dyn FnMut(Id, &mut CardLocationCache) -> Vec<Id>> = Box::new(|card_id: Id, cache: &mut CardLocationCache| {
+            AnnoCard::from_cached_id(&card_id, cache)
+                .card
+                .meta
+                .dependents
+        });
+        
+        let ids = match visit_collect_all_descendants(self.card.meta.id, &mut get_children, cache)  {
+            Ok(ids) => ids,
+            Err(id) => {
+                let card = AnnoCard::from_id(&id).unwrap();
+                panic!("Infinite recursion found with: {:?}", card);
+            }
+        };
+
+        let mut hey = vec![];
+
+        for id in ids {
+            hey.push(AnnoCard::from_id(&id).unwrap());
+        }
+        hey
+    }
+    
+
+    pub fn as_path(&self) -> PathBuf {
+        self.location.as_path()
+    }
+    
+    pub fn update_cache(&self, cache: &mut CardLocationCache) {
+        cache.cache_one(self);
+    }
+
+    pub fn pending_filter(&self, cache: &mut CardLocationCache) -> bool {
+        self.card.meta.stability.is_none()
+            && !self.card.meta.suspended
+            && self.card.meta.finished
+            && self.is_confidently_resolved(cache)
+    }
+
+    pub fn unfinished_filter(&self, cache: &mut CardLocationCache) -> bool {
+        !self.card.meta.finished && !self.card.meta.suspended && self.is_resolved(cache)
+    }
+
+    pub fn review_filter(&self, cache: &mut CardLocationCache) -> bool {
+        match (self.card.meta.stability, self.card.time_since_last_review()) {
+            (Some(stability), Some(last_review_time)) => {
+                self.card.meta.finished
+                    && !self.card.meta.suspended
+                    && last_review_time > Duration::from_secs(60) // Lets not review if its less than a minute since last time
+                    && stability < last_review_time
+                    && self.is_confidently_resolved(cache)
+            }
+            (_, _) => false,
+        }
+    }
+
+    /// Checks if corresponding file has been modified after this type got deserialized from the file.
+    pub fn is_outdated(&self) -> bool {
+        let file_last_modified = {
+            let path = self.as_path();
+            let system_time = std::fs::metadata(path).unwrap().modified().unwrap();
+            system_time_as_unix_time(system_time)
+        };
+
+        let in_memory_last_modified = self.last_modified;
+
+        match in_memory_last_modified.cmp(&file_last_modified) {
+            Ordering::Less => true,
+            Ordering::Equal => false,
+            Ordering::Greater => panic!("Card in-memory shouldn't have a last_modified more recent than its corresponding file"),
+        }
+    }
+
+
+    pub fn is_resolved(&self, cache: &mut CardLocationCache) -> bool {
+        self.get_dependencies(cache)
+            .iter()
+            .all(|card| card.card.meta.finished)
+    }
+
+    /// Checks that its dependencies are not only marked finished, but they're also strong memories.
+    pub fn is_confidently_resolved(&self, cache: &mut CardLocationCache) -> bool {
+        let min_stability = Duration::from_secs(86400 * 2);
+        let min_recall: f32 = 0.95;
+
+        self.get_dependencies(cache).iter().all(|card| {
+            let (Some(stability), Some(recall)) = (card.card.meta.stability, card.card.recall_rate()) else {return false};
+            
+            card.card.meta.finished && stability > min_stability && recall > min_recall
+        })
+    }
+
+    /// Moves card by deleting it and then creating it again in a new location
+    /// warning: will refresh file name
+    pub fn move_card(self, destination: &Category, cache: &mut CardLocationCache) -> Self {
+        if self.location.category == *destination {
             return self;
         }
-        assert!(self.1.as_path().exists());
-        std::fs::remove_file(self.1.as_path()).unwrap();
-        assert!(!self.1.as_path().exists());
-        self.into_card().save_new_card(category)
+        assert!(self.as_path().exists());
+        std::fs::remove_file(self.as_path()).unwrap();
+        assert!(!self.as_path().exists());
+        self.into_card().save_new_card(destination, cache)
     }
 
-    pub fn print_by_strength() -> BTreeSet<CardAndRecall> {
-        Self::load_all()
-            .into_iter()
-            .filter_map(|card| CardAndRecall::from_card(&card))
-            .collect()
-    }
 
     pub fn get_review_type(&self) -> ReviewType {
-        match (self.0.meta.stability, self.0.meta.finished) {
+        match (self.card.meta.stability, self.card.meta.finished) {
             (Some(_), true) => ReviewType::Normal,
             (_, false) => ReviewType::Unfinished,
             (None, true) => ReviewType::Pending,
         }
     }
 
-    pub fn delete(self) {
-        let path = self.full_path();
+    pub fn delete(self, cache: &mut CardLocationCache) {
+        cache.0.remove(&self.card.meta.id);
+        let path = self.as_path();
         std::fs::remove_file(path).unwrap();
     }
 
@@ -213,42 +360,53 @@ impl AnnoCard {
     }
 
     pub fn search(input: String) -> Vec<Self> {
-        Self::load_all()
+        let mut cards: Vec<Self> = Self::load_all()
             .into_iter()
             .filter(|card| {
-                card.0
+                card.card
                     .front
                     .text
                     .to_ascii_lowercase()
                     .contains(&input.to_ascii_lowercase())
                     || card
-                        .0
+                        .card
                         .back
                         .text
                         .to_ascii_lowercase()
                         .contains(&input.to_ascii_lowercase())
             })
-            .collect()
-    }
-
-    pub fn is_resolved(&self) -> bool {
-        !self.visit()
+            .collect();
+        Self::sort_by_last_modified(&mut cards);
+        cards
     }
 
     pub fn from_ids(ids: Vec<Id>) -> Vec<Self> {
         let mut vec = vec![];
         for id in ids {
-            if let Some(card) = Self::from_id(id) {
+            if let Some(card) = Self::from_id(&id) {
                 vec.push(card);
             }
         }
         vec
     }
+    
+    pub fn from_cached_id(id: &Id, cache: &mut CardLocationCache) -> Self {
+        let Some(location) = cache.0.get(id) else {
+            let card = Self::from_id(id);
+            panic!("oh shit, didn't find the card: {:?} from this id: {}", card, id);
+        };
 
-    pub fn from_id(id: Id) -> Option<Self> {
+        Self::from_location(location)
+    }
+    
+    pub fn from_location(location: &CardLocation) -> Self {
+        Self::from_path(&location.as_path())
+    }
+
+    pub fn from_id(id: &Id) -> Option<Self> {
         Self::load_all()
             .into_iter()
-            .find(|card| card.0.meta.id == id)
+            .find(|card| &card.card.meta.id == id)
     }
     pub fn load_all() -> Vec<Self> {
         Self::get_cards_from_category_recursively(&Category::root())
@@ -258,22 +416,22 @@ impl AnnoCard {
         let mut map = HashMap::new();
         let cards = Self::load_all();
         for card in cards {
-            map.insert(card.0.meta.id, card);
+            map.insert(card.card.meta.id, card);
         }
         map
     }
 
     pub fn sort_by_last_modified(vec: &mut [Self]) {
-        vec.sort_by_key(|k| Reverse(k.1.last_modified));
+        vec.sort_by_key(|k| Reverse(k.last_modified));
     }
 
     pub fn get_full_card_from_id(id: Id) -> Option<Self> {
         let cards = get_all_cards_full();
-        cards.into_iter().find(|card| card.0.meta.id == id)
+        cards.into_iter().find(|card| card.card.meta.id == id)
     }
 
     pub fn edit_with_vim(&self) -> Self {
-        let path = self.full_path();
+        let path = self.as_path();
         open_file_with_vim(path.as_path()).unwrap();
         Self::from_path(path.as_path())
     }
@@ -281,31 +439,34 @@ impl AnnoCard {
     pub fn from_path(path: &Path) -> Self {
         let content = read_to_string(path).expect("Could not read the TOML file");
         let card: Card = toml::from_str(&content).unwrap();
-        let file_data = CardFileData::from_path(path);
-        Self(card, file_data)
+        let location = CardLocation::new(path);
+
+        let last_modified = {
+            let system_time = std::fs::metadata(path).unwrap().modified().unwrap();
+            system_time_as_unix_time(system_time)
+        };
+
+        Self {
+            card, location, last_modified
+        }
     }
 
     pub fn into_card(self) -> Card {
-        self.0
+        self.card
     }
 
     pub fn card_as_ref(&self) -> &Card {
-        &self.0
+        &self.card
     }
 
     pub fn card_as_mut_ref(&mut self) -> &mut Card {
-        &mut self.0
+        &mut self.card
     }
 
-    pub fn full_path(&self) -> PathBuf {
-        let mut path = self.1.category.as_path().join(self.1.file_name.clone());
-        path.set_extension("toml");
-        path
-    }
 
     // Gets called automatically when object goes out of scope.
     pub fn update_card(&self) -> Self {
-        let path = self.1.as_path();
+        let path = self.as_path();
         if !path.exists() {
             let msg = format!("following path doesn't really exist: {}", path.display());
             panic!("{msg}");
@@ -319,14 +480,14 @@ impl AnnoCard {
     }
 
     pub fn refresh(&mut self) {
-        *self = Self::from_path(&self.1.as_path())
+        *self = Self::from_path(&self.location.as_path())
     }
 
     pub fn new_review(&mut self, grade: Grade) -> Self {
         let review = Review::new(grade.clone());
-        let time_passed = self.0.time_passed_since_last_review();
-        self.0.history.push(review);
-        self.0.meta.stability = Some(Card::new_stability(grade, time_passed));
+        let time_passed = self.card.time_passed_since_last_review();
+        self.card.history.push(review);
+        self.card.meta.stability = Some(Card::new_stability(grade, time_passed));
         self.update_card()
     }
 }
@@ -351,13 +512,6 @@ impl Card {
         }
     }
 
-    pub fn is_resolved(&self) -> bool {
-        if self.meta.dependencies.is_empty() {
-            return true;
-        }
-        false
-    }
-
     pub fn new_simple(front: String, back: String) -> Self {
         Card {
             front: Side {
@@ -378,7 +532,7 @@ impl Card {
         Some(Self::calculate_strength(days_passed, stability))
     }
 
-    fn calculate_strength(days_passed: Duration, stability: Duration) -> RecallRate {
+    pub fn calculate_strength(days_passed: Duration, stability: Duration) -> RecallRate {
         let base: f32 = 0.9;
         let ratio = days_passed.as_secs_f32() / stability.as_secs_f32();
         (base.ln() * ratio).exp()
@@ -390,31 +544,12 @@ impl Card {
         current_unix.checked_sub(last_unix)
     }
 
-    pub fn pending_filter(&self) -> bool {
-        self.meta.stability.is_none() && !self.meta.suspended && self.meta.finished
-    }
-
-    pub fn unfinished_filter(&self) -> bool {
-        !self.meta.finished && !self.meta.suspended
-    }
-
-    pub fn review_filter(&self) -> bool {
-        match (self.meta.stability, self.time_since_last_review()) {
-            (Some(stability), Some(last_review_time)) => {
-                self.meta.finished
-                    && !self.meta.suspended
-                    && last_review_time > Duration::from_secs(60) // Lets not review if its less than a minute since last time
-                    && stability < last_review_time
-            }
-            (_, _) => false,
-        }
-    }
-
-    pub fn save_new_card(self, category: &Category) -> AnnoCard {
+    pub fn save_new_card(self, category: &Category, cache: &mut CardLocationCache) -> AnnoCard {
         let toml = toml::to_string(&self).unwrap();
         std::fs::create_dir_all(category.as_path()).unwrap();
         let max_char_len = 40;
-        let mut file_name = PathBuf::from(truncate_string(self.front.text, max_char_len));
+        let front_text = self.front.text.chars().filter(|c|c.is_ascii_alphanumeric() || c.is_ascii_whitespace() ).collect::<String>().replace(' ', "_");
+       let mut file_name = PathBuf::from(truncate_string(front_text, max_char_len));
         if file_name.exists() {
             file_name = PathBuf::from(self.meta.id.to_string());
         }
@@ -423,7 +558,9 @@ impl Card {
 
         std::fs::write(&path, toml).unwrap();
 
-        AnnoCard::from_path(path.as_path())
+        let full_card = AnnoCard::from_path(path.as_path());
+        full_card.update_cache(cache);
+        full_card
     }
 
     fn new_stability(grade: Grade, time_passed: Option<Duration>) -> Duration {
@@ -453,12 +590,18 @@ pub enum Grade {
 
 impl Grade {
     pub fn get_factor(&self) -> f32 {
-        match self {
+        let factor = match self {
             Grade::None => 0.1,
             Grade::Late => 0.25,
             Grade::Some => 2.,
             Grade::Perfect => 3.,
-        }
+        };
+        factor * Self::randomize_factor()
+    }
+
+    // gets a random number from 0.8 to 1.2
+    fn randomize_factor() -> f32 {
+        1.2 - (((current_time().as_micros() % 40) as f32) / 100.)
     }
 }
 
@@ -478,6 +621,7 @@ impl std::str::FromStr for Grade {
 
 use crate::common::{
     open_file_with_vim, serde_duration_as_secs, system_time_as_unix_time, truncate_string,
+    visit_collect_all_descendants,
 };
 
 #[derive(Hash, Deserialize, Clone, Serialize, Debug, Default)]
@@ -565,9 +709,34 @@ where
     }
 }
 
+
+pub fn ccalculate_left_memory(days_passed: Duration, stability: Duration) -> f32 {
+    let base: f32 = 0.9;
+    let ratio = days_passed.as_secs_f32() / stability.as_secs_f32();
+    let lambda = -base.ln();
+
+    (lambda * ratio).exp() / lambda
+}
+
+pub fn calculate_left_memory(t1: Duration, stability: Duration) -> f32 {
+    let base: f32 = 0.9;
+    let lambda = -base.ln();
+    let ratio1 = t1.as_secs_f32() / stability.as_secs_f32();
+
+    (-lambda * ratio1).exp() / lambda
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    
+    #[test]
+    fn test_memory_integral(){
+        let days_passed = Duration::from_secs(86400 * 1);
+        let stability = Duration::from_secs(86400 * 1);
+        dbg!(calculate_left_memory(days_passed, stability));
+    }
 
     #[test]
     fn test_load_cards_from_folder() {

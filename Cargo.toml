@@ -18,6 +18,7 @@ crossterm = "0.26.1"
 ureq = { version = "2.6.2", default-features = false, features = ["tls"] }
 rodio = "0.16.0"
 csv = "1.2.2"
+rasciigraph = "0.2.0"
 #rusqlite = "0.24.0"
 
 
