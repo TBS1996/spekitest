@@ -90,11 +90,7 @@ impl Category {
                 let location = CardLocation::new(&path);
                 let last_modified = get_last_modified(path);
 
-                let full_card = AnnoCard {
-                    card,
-                    location,
-                    last_modified,
-                };
+                let full_card = AnnoCard::new(card, location, last_modified);
                 cards.push(full_card);
             }
         }

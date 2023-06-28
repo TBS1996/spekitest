@@ -139,9 +139,9 @@ impl CardFileData {
 
 #[derive(Clone, Hash, Debug)]
 pub struct AnnoCard {
-    pub card: Card,
-    pub location: CardLocation,
-    pub last_modified: Duration,
+    card: Card,
+    location: CardLocation,
+    last_modified: Duration,
 }
 
 
@@ -169,15 +169,6 @@ impl VisitStuff for AnnoCard {
     }
 }
 
-/*
-impl Drop for AnnoCard {
-    fn drop(&mut self) {
-        if self.1.as_path().exists() {
-            self.update_card();
-        }
-    }
-}
-*/
 
 pub enum ReviewType {
     Normal,
@@ -188,13 +179,88 @@ pub enum ReviewType {
 type GetIds = Box<dyn FnMut(Id) -> Vec<Id>>;
 
 impl AnnoCard {
+    pub fn new(card: Card, location: CardLocation, last_modified: Duration) -> Self {
+        Self {
+            card,
+            location,
+            last_modified,
+        }
+    }
+    
+    pub fn category(&self) -> &Category {
+        &self.location.category
+    }
+    
+    pub fn last_modified(&self) -> &Duration {
+        &self.last_modified
+    }
+    
+    pub fn front_text(&self) -> &str {
+        &self.card.front.text
+    }
+    
+    pub fn is_suspended(&self) -> bool {
+        self.card.meta.suspended.is_suspended()
+    }
+    
+    pub fn is_finished(&self) -> bool {
+        self.card.meta.finished
+    }
+    
+    pub fn recall_rate(&self) -> Option<f32> {
+        self.card.recall_rate()
+    }
+    
+    pub fn stability(&self) -> Option<&Duration> {
+        self.card.meta.stability.as_ref()
+    }
+    
+    pub fn time_since_last_review(&self) -> Option<Duration> {
+        self.card.time_passed_since_last_review()
+    }
+    
+    pub fn set_suspended(&mut self, suspended: IsSuspended) {
+        self.card.meta.suspended = suspended;
+    }
+    
+    pub fn set_finished(&mut self, finished: bool) {
+        self.card.meta.finished = finished;
+    }
+    
+    pub fn back_text(&self) -> &str {
+        &self.card.back.text
+    }
+
+    pub fn insert_tag(&mut self, tag: String)  {
+        self.card.meta.tags.insert(tag);
+    }
+    
+    pub fn remove_tag(&mut self, tag: String) {
+        self.card.meta.tags.remove(&tag);
+    }
+    
+    pub fn contains_tag(&self, tag: &str) -> bool {
+        self.card.meta.tags.contains(tag)
+    }
+
+    pub fn id(&self) -> &Id {
+        &self.card.meta.id
+    }
+    
+    pub fn dependents(&self) -> &BTreeSet<Id> {
+        &self.card.meta.dependents
+    }
+
+    pub fn dependencies(&self) -> &BTreeSet<Id> {
+        &self.card.meta.dependencies
+    }
     
     pub fn set_dependent(&mut self, id: &Id) {
         self.card.meta.dependents.insert(*id);
         self.update_card();
         
         let mut other_card = Self::from_id(id).unwrap();
-        other_card.card.meta.dependencies.insert(*id);
+        other_card.card.meta.dependencies.insert(self.card.meta.id);
         other_card.update_card();
     }
 
@@ -203,8 +269,25 @@ impl AnnoCard {
         self.update_card();
         
         let mut other_card = Self::from_id(id).unwrap();
-        other_card.card.meta.dependents.insert(*id);
+        other_card.card.meta.dependents.insert(self.card.meta.id);
         other_card.update_card();
+    }
+    
+    pub fn remove_dependency(&mut self, id: &Id) {
+        self.card.meta.dependencies.remove(id);
+        let mut other_card = Self::from_id(id).unwrap();
+        other_card.card.meta.dependents.remove(self.id());
+        other_card.update_card();
+        self.update_card();
+    }
+    
+    
+    pub fn remove_dependent(&mut self, id: &Id) {
+        self.card.meta.dependencies.remove(id);
+        let mut other_card = Self::from_id(id).unwrap();
+        other_card.card.meta.dependencies.remove(self.id());
+        other_card.update_card();
+        self.update_card();
     }
     
 
@@ -351,8 +434,25 @@ impl AnnoCard {
 
     pub fn delete(self, cache: &mut CardLocationCache) {
         cache.0.remove(&self.card.meta.id);
+
         let path = self.as_path();
         std::fs::remove_file(path).unwrap();
+
+        let self_id = self.card.meta.id;
+        
+        for dependency in self.card.meta.dependencies {
+            let Some(mut dependency) = AnnoCard::from_id(&dependency) else {continue};
+            dependency.card.meta.dependents.remove(&self_id);
+            dependency.update_card();
+        }
+        
+        
+        for dependent in self.card.meta.dependents {
+            let Some(mut dependent) = AnnoCard::from_id(&dependent) else {continue};
+            dependent.card.meta.dependencies.remove(&self_id);
+            dependent.update_card();
+        }
+
     }
 
     pub fn get_cards_from_category_recursively(category: &Category) -> Vec<Self> {
@@ -485,7 +585,6 @@ impl AnnoCard {
     }
 
 
-    // Gets called automatically when object goes out of scope.
     pub fn update_card(&self) -> Self {
         let path = self.as_path();
         if !path.exists() {
@@ -550,10 +649,10 @@ impl Card {
     pub fn recall_rate(&self) -> Option<RecallRate> {
         let days_passed = self.time_since_last_review()?;
         let stability = self.meta.stability?;
-        Some(Self::calculate_strength(days_passed, stability))
+        Some(Self::calculate_strength(&days_passed, &stability))
     }
 
-    pub fn calculate_strength(days_passed: Duration, stability: Duration) -> RecallRate {
+    pub fn calculate_strength(days_passed: &Duration, stability: &Duration) -> RecallRate {
         let base: f32 = 0.9;
         let ratio = days_passed.as_secs_f32() / stability.as_secs_f32();
         (base.ln() * ratio).exp()
@@ -682,6 +781,7 @@ use serde::de::{Deserializer};
 pub enum IsSuspended{
     False,
     True,
+    // Card is temporarily suspended, until contained unix time has passed.
     TrueUntil(Duration),
 }
 
@@ -695,7 +795,6 @@ impl From<bool> for IsSuspended{
 }
 
 impl IsSuspended{
-    
     fn verify_time(self) -> Self {
         if let Self::TrueUntil(dur) = self {
             if dur < current_time() {
@@ -714,19 +813,8 @@ impl IsSuspended{
 
     // prefer this if you have mutable reference
     pub fn is_suspended_mut(&mut self) -> bool {
-        match self {
-            IsSuspended::False => false,
-            IsSuspended::True => true,
-            IsSuspended::TrueUntil(dur) => {
-                let now = current_time();
-                if now > *dur {
-                    *self = Self::False;
-                     false
-                } else {
-                    true
-                }
-            },
-        }
+        *self = self.clone().verify_time();
+        self.is_suspended()
     }
 }
 
@@ -865,11 +953,11 @@ mod tests {
     fn test_strength() {
         let stability = Duration::from_secs(86400);
         let days_passed = Duration::default();
-        let recall_rate = Card::calculate_strength(days_passed, stability);
+        let recall_rate = Card::calculate_strength(&days_passed, &stability);
         assert_eq!(recall_rate, 1.0);
 
         let days_passed = Duration::from_secs(86400);
-        let recall_rate = Card::calculate_strength(days_passed, stability);
+        let recall_rate = Card::calculate_strength(&days_passed, &stability);
         assert_eq!(recall_rate, 0.9);
     }
 }
