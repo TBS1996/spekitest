@@ -6,10 +6,10 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, SystemTime};
 
-use crate::card::CardLocationCache;
+use crate::frontend::move_far_left;
 
 pub fn current_time() -> Duration {
-    system_time_as_unix_time(SystemTime::now())
+    system_time_as_unix_time(SystemTime::now()) // + Duration::from_secs(8644000)
 }
 
 pub fn system_time_as_unix_time(time: SystemTime) -> Duration {
@@ -105,32 +105,37 @@ pub fn visit_check_any_match_predicate<T: Sized>(
     false
 }
 
-pub fn visit_collect_all_descendants<T: Sized + Clone + PartialEq + Debug>(
-    ty: T,
-    get_children: &mut Box<dyn FnMut(T, &mut CardLocationCache) -> Vec<T>>,
-    cache: &mut CardLocationCache,
-) -> Result<Vec<T>, T> {
-    let mut descendants = vec![];
-    visit_collect_all_descendants_inner(ty, &mut descendants, get_children, cache)?;
-    Ok(descendants)
+pub fn double_vec<T: Clone>(vec: Vec<T>) -> Vec<T> {
+    let mut output = vec![];
+    for v in vec {
+        output.push(v.clone());
+        output.push(v);
+    }
+    output
 }
 
-fn visit_collect_all_descendants_inner<T: Sized + Clone + PartialEq + Debug>(
-    ty: T,
-    descendants: &mut Vec<T>,
-    get_children: &mut Box<dyn FnMut(T, &mut CardLocationCache) -> Vec<T>>,
-    cache: &mut CardLocationCache,
-) -> Result<(), T> {
-    let kids = get_children(ty, cache);
-    for kid in &kids {
-        if !descendants.contains(kid) {
-            descendants.push(kid.to_owned());
-            visit_collect_all_descendants_inner(kid.clone(), descendants, get_children, cache)?;
-        } else {
-            //return Err(kid.to_owned());
+pub fn interpolate(input: Vec<f64>) -> Vec<f64> {
+    if input.len() < 2 {
+        return input.to_vec();
+    }
+
+    let mut result = Vec::new();
+
+    for window in input.windows(2) {
+        let start = window[0];
+        let end = window[1];
+        let diff = end - start;
+
+        // For this window, generate the interpolated values
+        for i in 0..=diff as usize {
+            result.push(start + i as f64);
         }
     }
-    Ok(())
+
+    // Push the last value, as the window iteration will miss it
+    result.push(*input.last().unwrap());
+
+    result
 }
 
 #[cfg(test)]

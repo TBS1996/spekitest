@@ -1,14 +1,14 @@
-use crate::card::{AnnoCard, CardLocation, CardLocationCache};
+use crate::card::{Card, CardCache, CardLocation, SavedCard};
 use crate::folders::get_last_modified;
 use crate::paths::{self, get_cards_path};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs::{self, File};
 use std::io::{self, BufRead};
 use std::path::Path;
 use std::path::PathBuf;
 
 // Represent the category that a card is in, can be nested
-#[derive(Hash, Debug, Clone, Default, PartialEq)]
+#[derive(Ord, PartialOrd, Eq, Hash, Debug, Clone, Default, PartialEq)]
 pub struct Category(pub Vec<String>);
 
 fn read_lines<P>(filename: P) -> io::Result<Vec<String>>
@@ -77,21 +77,21 @@ impl Category {
         }
     }
 
-    pub fn get_containing_cards(&self) -> Vec<AnnoCard> {
+    pub fn get_containing_cards(&self) -> HashSet<SavedCard> {
         let directory = self.as_path();
-        let mut cards = Vec::new();
+        let mut cards = HashSet::new();
 
         for entry in std::fs::read_dir(directory).unwrap() {
             let entry = entry.unwrap();
             let path = entry.path();
 
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("toml") {
-                let card = AnnoCard::from_path(path.as_path()).into_card();
+                let card = SavedCard::from_path(path.as_path()).into_card();
                 let location = CardLocation::new(&path);
                 let last_modified = get_last_modified(path);
 
-                let full_card = AnnoCard::new(card, location, last_modified);
-                cards.push(full_card);
+                let full_card = SavedCard::new(card, location, last_modified);
+                cards.insert(full_card);
             }
         }
         cards
@@ -104,7 +104,7 @@ impl Category {
             a_str.cmp(&b_str)
         });
     }
-    pub fn get_following_categories(&self) -> Vec<Self> {
+    pub fn get_following_categories(&self) -> HashSet<Self> {
         let categories = Category::load_all().unwrap();
         let catlen = self.0.len();
         categories
@@ -194,25 +194,25 @@ impl Category {
 
     fn get_cards_with_filter(
         &self,
-        mut filter: Box<dyn FnMut(&AnnoCard, &mut CardLocationCache) -> bool>,
-        cache: &mut CardLocationCache,
-    ) -> Vec<AnnoCard> {
+        mut filter: Box<dyn FnMut(&SavedCard, &mut CardCache) -> bool>,
+        cache: &mut CardCache,
+    ) -> Vec<SavedCard> {
         self.get_containing_cards()
             .into_iter()
             .filter(|card| filter(card, cache))
             .collect()
     }
 
-    pub fn get_unfinished_cards(&self, cache: &mut CardLocationCache) -> Vec<AnnoCard> {
-        self.get_cards_with_filter(Box::new(AnnoCard::unfinished_filter), cache)
+    pub fn get_unfinished_cards(&self, cache: &mut CardCache) -> Vec<SavedCard> {
+        self.get_cards_with_filter(Box::new(SavedCard::unfinished_filter), cache)
     }
 
-    pub fn get_pending_cards(&self, cache: &mut CardLocationCache) -> Vec<AnnoCard> {
-        self.get_cards_with_filter(Box::new(AnnoCard::pending_filter), cache)
+    pub fn get_pending_cards(&self, cache: &mut CardCache) -> Vec<SavedCard> {
+        self.get_cards_with_filter(Box::new(SavedCard::pending_filter), cache)
     }
 
-    pub fn get_review_cards(&self, cache: &mut CardLocationCache) -> Vec<AnnoCard> {
-        self.get_cards_with_filter(Box::new(AnnoCard::review_filter), cache)
+    pub fn get_review_cards(&self, cache: &mut CardCache) -> Vec<SavedCard> {
+        self.get_cards_with_filter(Box::new(SavedCard::review_filter), cache)
     }
 }
 

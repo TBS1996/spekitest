@@ -2,19 +2,55 @@
 
 use std::fmt::Display;
 use std::io::{stdout, Stdout};
+use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
-use crate::card::{
-    calculate_left_memory, AnnoCard, Card, CardLocationCache, IsSuspended, ReviewType,
-};
+use crate::card::{calculate_left_memory, Card, CardCache, IsSuspended, ReviewType, SavedCard};
 use crate::categories::Category;
-use crate::common::{current_time, open_file_with_vim, randvec, truncate_string};
+use crate::common::{
+    current_time, double_vec, interpolate, open_file_with_vim, randvec, truncate_string,
+};
 use crate::config::Config;
 use crate::folders::view_cards_in_explorer;
 use crate::git::git_save;
 use crate::paths::get_share_path;
 
-pub fn suspend_card(stdout: &mut Stdout, card: &mut AnnoCard) {
+fn print_stats(stdout: &mut Stdout, cache: &mut CardCache) {
+    let cards = SavedCard::load_all();
+    let all_cards = cards.len();
+    let mut suspended = 0;
+    let mut finished = 0;
+    let mut pending = 0;
+    let mut strength = 0.;
+    let mut reviews = 0;
+    let mut resolved = 0;
+
+    for card in cards {
+        if card.is_suspended() {
+            suspended += 1;
+        }
+        if card.is_finished() {
+            finished += 1;
+        }
+        if card.stability().is_none() {
+            pending += 1;
+        }
+        reviews += card.reviews().len();
+
+        if card.is_resolved(cache) {
+            resolved += 1;
+        }
+
+        if let Some(memstr) = card.calculate_memory_left() {
+            strength += memstr;
+        }
+    }
+
+    let output = format!("suspended: {suspended}\nfinished: {finished}\npending: {pending}\nreviews: {reviews}\nstrength: {strength}\nresolved: {resolved}\ntotal cards: {all_cards}");
+    draw_message(stdout, output.as_str());
+}
+
+pub fn suspend_card(stdout: &mut Stdout, card: &mut SavedCard) {
     draw_message(stdout, "hey how many days do you wanna suspend?");
 
     loop {
@@ -35,20 +71,20 @@ pub fn suspend_card(stdout: &mut Stdout, card: &mut AnnoCard) {
 }
 
 pub fn health_check(stdout: &mut Stdout) {
-    let all_cards = AnnoCard::load_all();
+    let all_cards = SavedCard::load_all();
     move_upper_left(stdout);
 
-    for mut card in all_cards {
+    for card in all_cards {
         let id = card.id();
 
-        for dependency in card.dependencies() {
-            let mut dependency = AnnoCard::from_id(&dependency).unwrap();
-            dependency.set_dependent(&id);
+        for dependency in card.dependency_ids() {
+            let mut dependency = SavedCard::from_id(dependency).unwrap();
+            dependency.set_dependent(id);
         }
 
-        for dependent in card.dependents() {
-            let mut dependent = AnnoCard::from_id(&dependent).unwrap();
-            dependent.set_dependency(&id);
+        for dependent in card.dependent_ids() {
+            let mut dependent = SavedCard::from_id(dependent).unwrap();
+            dependent.set_dependency(id);
         }
     }
 }
@@ -61,10 +97,10 @@ pub fn move_upper_left(stdout: &mut Stdout) {
     execute!(stdout, MoveTo(0, 0)).unwrap()
 }
 
-pub fn view_dependencies(stdout: &mut Stdout, card: &mut AnnoCard, cache: &mut CardLocationCache) {
+pub fn view_dependencies(stdout: &mut Stdout, card: &mut SavedCard, cache: &mut CardCache) {
     let mut msg = String::from("Dependents:\n");
 
-    let dependents = card.get_dependents(cache);
+    let dependents = card.get_dependencies_cached(cache);
     for dep in dependents {
         msg.push_str(&format!(
             "   {}\tfinished: {}\n",
@@ -75,7 +111,7 @@ pub fn view_dependencies(stdout: &mut Stdout, card: &mut AnnoCard, cache: &mut C
     msg.push('\n');
     msg.push('\n');
 
-    let dependencies = card.get_dependencies(cache);
+    let dependencies = card.get_dependendents_cached(cache);
     msg.push_str("Dependencies:\n");
     for dep in dependencies {
         msg.push_str(&format!(
@@ -106,21 +142,12 @@ pub fn print_cool_graph(stdout: &mut Stdout, data: Vec<f64>, message: &str) {
     read().unwrap();
 }
 
-fn string_reverse() -> String {
-    let mut old_string = String::from("foo bar baz");
-    let mut reversed_string = String::new();
-
-    while let Some(ch) = old_string.pop() {
-        reversed_string.push(ch);
-    }
-    reversed_string
-}
-
-pub fn print_cool_graphs(stdout: &mut Stdout, cache: &mut CardLocationCache) {
-    let mut all_cards = AnnoCard::load_all();
+pub fn print_cool_graphs(stdout: &mut Stdout, _cache: &mut CardCache) {
+    let all_cards = SavedCard::load_all();
     //all_cards.retain(|card| card.is_resolved(cache));
 
-    let mut vec = vec![0; 50];
+    let max = 300;
+    let mut vec = vec![0; max];
     let mut max_stab = 0;
 
     for card in &all_cards {
@@ -129,15 +156,18 @@ pub fn print_cool_graphs(stdout: &mut Stdout, cache: &mut CardLocationCache) {
         if stability > max_stab {
             max_stab = stability;
         }
-        if stability < 50 {
+        if stability < max as u64 {
             vec[stability as usize] += 1;
         }
     }
 
     vec.truncate(max_stab as usize + 1);
 
-    let newvec = vec.into_iter().map(|num| num as f64).collect();
+    let mut newvec = vec.into_iter().map(|num| num as f64).collect();
+    newvec = double_vec(newvec);
+    newvec = double_vec(newvec);
 
+    println!("{:?}", &newvec);
     print_cool_graph(stdout, newvec, "Stability distribution");
 
     let mut rev_vec = vec![0; 50];
@@ -170,6 +200,16 @@ pub fn print_cool_graphs(stdout: &mut Stdout, cache: &mut CardLocationCache) {
         let Some(days_passed) = card.time_since_last_review() else {continue};
 
         let strength = calculate_left_memory(days_passed, stability.to_owned());
+        /*
+        println!(
+            "stability: {}, passed: {}, strength {}, card: {} ",
+            as_days(stability),
+            as_days(&days_passed),
+            strength,
+            card.front_text()
+        );
+        move_far_left(stdout);
+        */
         tot_strength += strength;
         let strength = strength as u32;
         if strength > max_strength {
@@ -210,61 +250,12 @@ pub fn print_cool_graphs(stdout: &mut Stdout, cache: &mut CardLocationCache) {
     print_cool_graph(stdout, recall_vec, "Recall distribution");
 }
 
-pub fn card_options(stdout: &mut Stdout, card: &mut AnnoCard, cache: &mut CardLocationCache) {
-    let options = vec![
-        "Add new dependency",
-        "Add new dependent",
-        "Add existing dependency",
-        "Add existing dependent",
-        "View dependency stuff",
-    ];
-    loop {
-        let Some(choice) = draw_menu(stdout, options.clone(), true) else {return};
-
-        match choice {
-            0 => {
-                draw_message(stdout, "Adding new dependency");
-                if let Some(updated_card) =
-                    add_dependency(stdout, card.to_owned(), Some(&card.category()), cache)
-                {
-                    *card = updated_card;
-                }
-            }
-            1 => {
-                draw_message(stdout, "Adding new dependent");
-                if let Some(updated_card) =
-                    add_dependent(stdout, card.to_owned(), Some(&card.category()), cache)
-                {
-                    *card = updated_card;
-                }
-            }
-            2 => {
-                *card = match pick_card_from_search(stdout) {
-                    Some(chosen_card) => {
-                        card.set_dependency(chosen_card.id());
-                        card.update_card()
-                    }
-                    None => continue,
-                }
-            }
-            3 => {
-                *card = match pick_card_from_search(stdout) {
-                    Some(chosen_card) => {
-                        card.set_dependent(chosen_card.id());
-                        card.update_card()
-                    }
-                    None => continue,
-                }
-            }
-            4 => view_dependencies(stdout, card, cache),
-
-            _ => panic!(),
-        }
-    }
+pub fn as_days(dur: &Duration) -> f32 {
+    dur.as_secs_f32() / 86400.
 }
 
 pub fn run() {
-    let mut cache = CardLocationCache::new();
+    let mut cache = CardCache::new();
     enable_raw_mode().unwrap();
     let mut stdout = stdout();
     execute!(stdout, Hide).unwrap();
@@ -281,6 +272,7 @@ pub fn run() {
         "pretty graph",
         "lonely cards",
         "health check",
+        "stats",
     ];
 
     while let Some(choice) = draw_menu(&mut stdout, menu_items.clone(), true) {
@@ -321,7 +313,9 @@ pub fn run() {
                         );
                     }
                     2 => {
-                        let cards = get_following_unfinished_cards(&category, &mut cache);
+                        let mut cards = get_following_unfinished_cards(&category, &mut cache);
+                        cards.sort_by_key(|card| card.get_unfinished_dependent_qty(&mut cache));
+                        cards.reverse();
                         view_cards(&mut stdout, cards, &mut cache);
                     }
                     _ => continue,
@@ -335,14 +329,14 @@ pub fn run() {
                 let _ = Config::edit_with_vim();
             }
             4 => {
-                let mut cards = AnnoCard::load_all();
+                let mut cards: Vec<SavedCard> = SavedCard::load_all().into_iter().collect();
                 cards.sort_by_key(|card| card.last_modified().to_owned());
                 cards.reverse();
                 view_cards(&mut stdout, cards, &mut cache);
             }
             5 => {
                 if let Some(card) = search_for_item(&mut stdout, "find some card") {
-                    let mut cards = AnnoCard::load_all();
+                    let mut cards: Vec<SavedCard> = SavedCard::load_all().into_iter().collect();
                     cards.insert(0, card);
                     view_cards(&mut stdout, cards, &mut cache);
                 }
@@ -351,7 +345,7 @@ pub fn run() {
                 let tags: Vec<String> = Category::get_all_tags().into_iter().collect();
                 let tag = pick_item(&mut stdout, "Tag to filter by", &tags);
                 if let Some(tag) = tag {
-                    let cards = AnnoCard::load_all()
+                    let cards = SavedCard::load_all()
                         .into_iter()
                         .filter(|card| card.contains_tag(tag))
                         .collect();
@@ -366,10 +360,12 @@ pub fn run() {
                 print_cool_graphs(&mut stdout, &mut cache);
             }
             9 => {
-                let mut cards = AnnoCard::load_all();
+                let mut cards = SavedCard::load_all()
+                    .into_iter()
+                    .collect::<Vec<SavedCard>>();
                 cards.retain(|card| {
-                    card.dependencies().is_empty()
-                        && card.dependents().is_empty()
+                    card.dependency_ids().is_empty()
+                        && card.dependent_ids().is_empty()
                         && card.is_finished()
                 });
                 let cards = randvec(cards);
@@ -378,6 +374,7 @@ pub fn run() {
             10 => {
                 health_check(&mut stdout);
             }
+            11 => print_stats(&mut stdout, &mut cache),
             _ => {}
         };
     }
@@ -388,13 +385,13 @@ pub fn run() {
 
 use std::io::Write;
 
-pub fn search_for_item(stdout: &mut Stdout, message: &str) -> Option<AnnoCard> {
+pub fn search_for_item(stdout: &mut Stdout, message: &str) -> Option<SavedCard> {
     let mut input = String::new();
 
-    let cards = AnnoCard::load_all();
+    let cards = SavedCard::load_all();
     let mut index = 0;
 
-    let mut print_stuff = |search_term: &str, cards: Vec<&AnnoCard>, index: &mut usize| {
+    let mut print_stuff = |search_term: &str, cards: Vec<&SavedCard>, index: &mut usize| {
         clear_window(stdout);
         //move_upper_left(stdout);
         execute!(stdout, MoveTo(0, 0)).unwrap();
@@ -427,16 +424,16 @@ pub fn search_for_item(stdout: &mut Stdout, message: &str) -> Option<AnnoCard> {
             match event.code {
                 KeyCode::Char(c) => {
                     input.push(c);
-                    let the_cards = AnnoCard::search_in_cards(&input, &cards);
+                    let the_cards = SavedCard::search_in_cards(&input, &cards);
                     print_stuff(&input, the_cards, &mut index);
                 }
                 KeyCode::Backspace if !input.is_empty() => {
                     input.pop();
-                    let the_cards = AnnoCard::search_in_cards(&input, &cards);
+                    let the_cards = SavedCard::search_in_cards(&input, &cards);
                     print_stuff(&input, the_cards, &mut index);
                 }
                 KeyCode::Enter => {
-                    let the_cards = AnnoCard::search_in_cards(&input, &cards);
+                    let the_cards = SavedCard::search_in_cards(&input, &cards);
                     if the_cards.is_empty() {
                         return None;
                     }
@@ -445,11 +442,11 @@ pub fn search_for_item(stdout: &mut Stdout, message: &str) -> Option<AnnoCard> {
                 KeyCode::Down => {
                     index += 1;
 
-                    let the_cards = AnnoCard::search_in_cards(&input, &cards);
+                    let the_cards = SavedCard::search_in_cards(&input, &cards);
                     print_stuff(&input, the_cards, &mut index);
                 }
                 KeyCode::Up => {
-                    let the_cards = AnnoCard::search_in_cards(&input, &cards);
+                    let the_cards = SavedCard::search_in_cards(&input, &cards);
                     index = index.saturating_sub(1);
                     print_stuff(&input, the_cards, &mut index);
                 }
@@ -498,7 +495,7 @@ pub fn read_user_input(stdout: &mut Stdout) -> Option<(String, KeyCode)> {
     Some((input, key_code))
 }
 
-fn move_far_left(stdout: &mut Stdout) {
+pub fn move_far_left(stdout: &mut Stdout) {
     let (_, y) = cursor::position().unwrap();
     execute!(stdout, MoveTo(0, y)).unwrap();
 }
@@ -514,8 +511,8 @@ fn update_status_bar(stdout: &mut Stdout, msg: &str) {
 pub fn add_card(
     stdout: &mut Stdout,
     category: &mut Category,
-    cache: &mut CardLocationCache,
-) -> Option<AnnoCard> {
+    cache: &mut CardCache,
+) -> Option<SavedCard> {
     loop {
         execute!(stdout, Clear(ClearType::All)).unwrap();
         execute!(stdout, MoveTo(0, 0)).unwrap();
@@ -567,7 +564,7 @@ pub fn add_card(
     }
 }
 
-pub fn add_cards(stdout: &mut Stdout, mut category: Category, cache: &mut CardLocationCache) {
+pub fn add_cards(stdout: &mut Stdout, mut category: Category, cache: &mut CardCache) {
     loop {
         if add_card(stdout, &mut category, cache).is_none() {
             return;
@@ -582,10 +579,10 @@ pub enum SomeStatus {
 
 fn review_unfinished_card(
     stdout: &mut Stdout,
-    card: &mut AnnoCard,
-    cache: &mut CardLocationCache,
+    card: &mut SavedCard,
+    cache: &mut CardCache,
 ) -> SomeStatus {
-    let get_message = |card: &AnnoCard| {
+    let get_message = |card: &SavedCard| {
         format!(
             "{}\n-------------------\n{}",
             card.front_text(),
@@ -594,7 +591,8 @@ fn review_unfinished_card(
     };
 
     loop {
-        match draw_message(stdout, &get_message(card)) {
+        let ch = draw_message(stdout, &get_message(card));
+        match ch {
             KeyCode::Char('f') => {
                 card.set_finished(true);
                 card.update_card();
@@ -630,19 +628,13 @@ fn review_unfinished_card(
 
             KeyCode::Char('T') => {
                 draw_message(stdout, "Adding new dependent");
-                if let Some(updated_card) =
-                    add_dependent(stdout, card.to_owned(), Some(&card.category()), cache)
-                {
-                    *card = updated_card;
-                }
+                let category = Some(card.category().to_owned());
+                add_dependency(stdout, card, category.as_ref(), cache);
             }
             KeyCode::Char('Y') => {
                 draw_message(stdout, "Adding new dependency");
-                if let Some(updated_card) =
-                    add_dependency(stdout, card.to_owned(), Some(&card.category()), cache)
-                {
-                    *card = updated_card;
-                }
+                let category = Some(card.category().to_owned());
+                add_dependency(stdout, card, category.as_ref(), cache);
             }
             KeyCode::Char('D') => {
                 card.clone().delete(cache);
@@ -660,11 +652,7 @@ fn review_unfinished_card(
     SomeStatus::Continue
 }
 
-pub fn review_unfinished_cards(
-    stdout: &mut Stdout,
-    category: Category,
-    cache: &mut CardLocationCache,
-) {
+pub fn review_unfinished_cards(stdout: &mut Stdout, category: Category, cache: &mut CardCache) {
     let mut cards = category.get_unfinished_cards(cache);
     cards.reverse();
     let mut selected = 0;
@@ -674,8 +662,8 @@ pub fn review_unfinished_cards(
             break;
         }
         let cardqty = cards.len();
-        let mut card = &mut cards[selected];
-        let get_message = |card: &AnnoCard| {
+        let card = &mut cards[selected];
+        let get_message = |card: &SavedCard| {
             format!(
                 "{}/{}   {}\n{}\n-------------------\n{}",
                 selected + 1,
@@ -727,17 +715,17 @@ pub fn review_unfinished_cards(
             KeyCode::Char('T') => {
                 draw_message(stdout, "Adding new dependent");
                 if let Some(updated_card) =
-                    add_dependent(stdout, card.to_owned(), Some(&category.clone()), cache)
+                    add_dependent(stdout, card, Some(&category.clone()), cache)
                 {
-                    *card = updated_card;
+                    cards.insert(0, updated_card);
                 }
             }
             KeyCode::Char('Y') => {
                 draw_message(stdout, "Adding new dependency");
                 if let Some(updated_card) =
-                    add_dependency(stdout, card.to_owned(), Some(&category.clone()), cache)
+                    add_dependency(stdout, card, Some(&category.clone()), cache)
                 {
-                    *card = updated_card;
+                    cards.insert(0, updated_card);
                 }
             }
             KeyCode::Char('D') => {
@@ -763,11 +751,7 @@ pub fn review_unfinished_cards(
     draw_message(stdout, "Nothing left to review!");
 }
 
-pub fn review_pending_cards(
-    stdout: &mut Stdout,
-    category: Category,
-    cache: &mut CardLocationCache,
-) {
+pub fn review_pending_cards(stdout: &mut Stdout, category: Category, cache: &mut CardCache) {
     let categories = category.get_following_categories();
 
     for category in categories {
@@ -787,15 +771,15 @@ fn update_card_review_status(i: usize, qty: usize, category: &Category) -> Strin
     )
 }
 
-fn print_card_review_front(stdout: &mut Stdout, card: &mut Card, sound: bool) {
+fn print_card_review_front(stdout: &mut Stdout, card: &Card, sound: bool) {
     execute!(stdout, MoveTo(0, 1)).unwrap();
     println!("{}", card.front.text);
     if sound {
-        card.front.audio.play_audio();
+        //  card.front.audio.play_audio();
     }
 }
 
-fn print_card_review_back(stdout: &mut Stdout, card: &mut Card, sound: bool) {
+fn print_card_review_back(stdout: &mut Stdout, card: &Card, sound: bool) {
     move_far_left(stdout);
     execute!(stdout, MoveDown(1)).unwrap();
     move_far_left(stdout);
@@ -806,7 +790,7 @@ fn print_card_review_back(stdout: &mut Stdout, card: &mut Card, sound: bool) {
     move_far_left(stdout);
 
     if sound {
-        card.back.audio.play_audio();
+        //card.back.audio.play_audio();
     }
 }
 
@@ -820,108 +804,76 @@ fn print_card_review_full(stdout: &mut Stdout, card: &mut Card) {
     print_card_review_back(stdout, card, false);
 }
 
+fn print_card_for_review(stdout: &mut Stdout, card: &SavedCard, show_backside: bool, status: &str) {
+    execute!(stdout, Clear(ClearType::All)).unwrap();
+    update_status_bar(stdout, &status);
+    print_card_review_front(stdout, card.card_as_ref(), true);
+    if show_backside {
+        print_card_review_back(stdout, card.card_as_ref(), true);
+    }
+}
+
 fn review_card(
     stdout: &mut Stdout,
-    card: &mut AnnoCard,
+    card: &mut SavedCard,
     status: String,
-    cache: &mut CardLocationCache,
+    cache: &mut CardCache,
 ) -> SomeStatus {
-    let mut print_front = || {
-        execute!(stdout, Clear(ClearType::All)).unwrap();
-        update_status_bar(stdout, &status);
-        print_card_review_front(stdout, card.card_as_mut_ref(), true);
-    };
-
-    let print_all = |stdout: &mut Stdout, card: &mut AnnoCard| {
-        execute!(stdout, Clear(ClearType::All)).unwrap();
-        update_status_bar(stdout, &status);
-        print_card_review_front(stdout, card.card_as_mut_ref(), true);
-        print_card_review_back(stdout, card.card_as_mut_ref(), true);
-    };
-
-    print_front();
-
-    let key = get_keycode();
-
-    if should_exit(&key) {
-        return SomeStatus::Break;
-    }
-
-    if key == KeyCode::Char('`') {
-        card_options(stdout, card, cache);
-        execute!(stdout, Clear(ClearType::All)).unwrap();
-        update_status_bar(stdout, &status);
-        print_card_review_front(stdout, card.card_as_mut_ref(), true);
-    }
-
-    print_card_review_back(stdout, card.card_as_mut_ref(), true);
+    let mut show_backside = false;
     loop {
-        print_all(stdout, card);
-        match get_char() {
-            '`' => {
-                card_options(stdout, card, cache);
-                execute!(stdout, Clear(ClearType::All)).unwrap();
-                update_status_bar(stdout, &status);
-                print_card_review_front(stdout, card.card_as_mut_ref(), true);
-                print_card_review_back(stdout, card.card_as_mut_ref(), true);
-            }
-
-            'Y' => {
+        print_card_for_review(stdout, card, show_backside, status.as_str());
+        match get_keycode() {
+            KeyCode::Char('Y') => {
                 draw_message(stdout, "Adding new dependency");
-                if let Some(updated_card) =
-                    add_dependency(stdout, card.to_owned(), Some(&card.category()), cache)
-                {
-                    *card = updated_card;
-                }
+                let category = Some(card.category().to_owned());
+                add_dependency(stdout, card, category.as_ref(), cache);
             }
-            'T' => {
+            KeyCode::Char('T') => {
                 draw_message(stdout, "Adding new dependent");
-                if let Some(updated_card) =
-                    add_dependent(stdout, card.to_owned(), Some(&card.category()), cache)
-                {
-                    *card = updated_card;
-                }
+                let category = Some(card.category().to_owned());
+                add_dependent(stdout, card, category.as_ref(), cache);
             }
-            'y' => {
+            KeyCode::Char('y') => {
                 if let Some(chosen_card) = search_for_item(stdout, "Add dependency") {
                     card.set_dependency(chosen_card.id());
                 }
                 continue;
             }
-            't' => {
+            KeyCode::Char('t') => {
                 if let Some(chosen_card) = search_for_item(stdout, "Add dependent") {
                     card.set_dependent(chosen_card.id());
                 }
                 continue;
             }
-            'v' => {
+            KeyCode::Char('v') => {
                 view_dependencies(stdout, card, cache);
             }
-            'q' => return SomeStatus::Break,
-            'e' => {
+            KeyCode::Char('q') => return SomeStatus::Break,
+            KeyCode::Char('e') => {
                 *card = card.edit_with_vim();
                 print_card_review_full(stdout, card.card_as_mut_ref());
             }
-            // skip card
-            's' => break,
-            'S' => suspend_card(stdout, card),
-            'a' => {
+            KeyCode::Char(' ') => show_backside = true,
+            KeyCode::Char('s') => break,
+            KeyCode::Char('S') => suspend_card(stdout, card),
+            KeyCode::Char('a') => {
                 add_card(stdout, &mut card.category().to_owned(), cache);
             }
-
-            c => match c.to_string().parse() {
+            KeyCode::Char(c) if show_backside => match c.to_string().parse() {
                 Ok(grade) => {
                     *card = card.new_review(grade);
                     break;
                 }
                 _ => continue,
             },
+            key if should_exit(&key) => return SomeStatus::Break,
+            _ => continue,
         }
     }
     SomeStatus::Continue
 }
 
-fn view_cards(stdout: &mut Stdout, mut cards: Vec<AnnoCard>, cache: &mut CardLocationCache) {
+fn view_cards(stdout: &mut Stdout, mut cards: Vec<SavedCard>, cache: &mut CardCache) {
     if cards.is_empty() {
         draw_message(stdout, "No cards found");
         return;
@@ -931,7 +883,7 @@ fn view_cards(stdout: &mut Stdout, mut cards: Vec<AnnoCard>, cache: &mut CardLoc
 
     loop {
         let card_qty = cards.len();
-        let mut card = &mut cards[selected];
+        let card = &mut cards[selected];
 
         let message = format!(
             "{}/{}\t{}\n{}\n-------------------\n{}",
@@ -956,11 +908,10 @@ fn view_cards(stdout: &mut Stdout, mut cards: Vec<AnnoCard>, cache: &mut CardLoc
                     selected -= 1;
                 }
             }
-            KeyCode::Char('`') => {
-                card_options(stdout, card, cache);
-            }
             KeyCode::Char('a') => {
-                add_card(stdout, &mut card.category().clone(), cache);
+                if let Some(card) = add_card(stdout, &mut card.category().clone(), cache) {
+                    cards.insert(0, card); // temp thing
+                }
             }
             KeyCode::Char('f') => {
                 card.set_finished(true);
@@ -993,29 +944,27 @@ fn view_cards(stdout: &mut Stdout, mut cards: Vec<AnnoCard>, cache: &mut CardLoc
 
             KeyCode::Char('T') => {
                 draw_message(stdout, "Adding new dependent");
-                if let Some(updated_card) =
-                    add_dependent(stdout, card.to_owned(), Some(&card.category()), cache)
-                {
-                    *card = updated_card;
+                let category = Some(card.category().to_owned());
+                if let Some(updated_card) = add_dependent(stdout, card, category.as_ref(), cache) {
+                    cards.insert(0, updated_card);
                 }
             }
             KeyCode::Char('Y') => {
                 draw_message(stdout, "Adding new dependency");
-                if let Some(updated_card) =
-                    add_dependency(stdout, card.to_owned(), Some(&card.category()), cache)
-                {
-                    *card = updated_card;
+                let category = Some(card.category().to_owned());
+                if let Some(updated_card) = add_dependency(stdout, card, category.as_ref(), cache) {
+                    cards.insert(0, updated_card);
                 }
             }
             KeyCode::Char('y') => {
                 if let Some(chosen_card) = search_for_item(stdout, "Add dependency") {
-                    card.set_dependency(&chosen_card.id());
+                    card.set_dependency(chosen_card.id());
                 }
                 continue;
             }
             KeyCode::Char('t') => {
                 if let Some(chosen_card) = search_for_item(stdout, "Add dependent") {
-                    card.set_dependent(&chosen_card.id());
+                    card.set_dependent(chosen_card.id());
                 }
                 continue;
             }
@@ -1033,28 +982,41 @@ fn view_cards(stdout: &mut Stdout, mut cards: Vec<AnnoCard>, cache: &mut CardLoc
             KeyCode::Char('e') => {
                 *card = card.edit_with_vim();
             }
+            KeyCode::Char('/') => {
+                if let Some(thecard) = search_for_item(stdout, "find some card") {
+                    let mut idx = None;
+                    for card in cards.iter().enumerate() {
+                        if card.1.id() == thecard.id() {
+                            idx = Some(card.0);
+                        }
+                    }
+
+                    if let Some(idx) = idx {
+                        cards.swap(0, idx);
+                        selected = 0;
+                    } else {
+                        draw_message(stdout, "damn ...");
+                    }
+                }
+            }
             key if should_exit(&key) => return,
             _ => {}
         };
     }
 }
 
-fn rev_cards(stdout: &mut Stdout, mut cards: Vec<AnnoCard>, cache: &mut CardLocationCache) -> bool {
+fn rev_cards(stdout: &mut Stdout, mut cards: Vec<SavedCard>, _cache: &mut CardCache) -> bool {
     let qty = cards.len();
 
     for (i, card) in cards.iter_mut().enumerate() {
         execute!(stdout, Clear(ClearType::All)).unwrap();
-        update_card_review_status(i, qty, &card.category());
+        update_card_review_status(i, qty, card.category());
         print_card_review_front(stdout, card.card_as_mut_ref(), true);
 
         let key = get_keycode();
 
         if should_exit(&key) {
             return false;
-        }
-
-        if key == KeyCode::Char('`') {
-            card_options(stdout, card, cache);
         }
 
         print_card_review_back(stdout, card.card_as_mut_ref(), true);
@@ -1081,10 +1043,7 @@ fn rev_cards(stdout: &mut Stdout, mut cards: Vec<AnnoCard>, cache: &mut CardLoca
     false
 }
 
-fn get_following_unfinished_cards(
-    category: &Category,
-    cache: &mut CardLocationCache,
-) -> Vec<AnnoCard> {
+fn get_following_unfinished_cards(category: &Category, cache: &mut CardCache) -> Vec<SavedCard> {
     let categories = category.get_following_categories();
     let mut cards = vec![];
     for category in categories {
@@ -1093,13 +1052,14 @@ fn get_following_unfinished_cards(
     randvec(cards)
 }
 
-pub type CardsFromCategory = Box<dyn FnMut(&Category, &mut CardLocationCache) -> Vec<AnnoCard>>;
+pub type CardsFromCategory = Box<dyn FnMut(&Category, &mut CardCache) -> Vec<SavedCard>>;
+pub type RxCardsFromCategory = Box<dyn FnMut(&Category, &mut CardCache) -> Receiver<SavedCard>>;
 
 pub fn review_cards(
     stdout: &mut Stdout,
     category: Category,
     mut get_cards: CardsFromCategory,
-    cache: &mut CardLocationCache,
+    cache: &mut CardCache,
 ) {
     let categories = category.get_following_categories();
 
@@ -1113,8 +1073,8 @@ pub fn review_cards(
                 index,
                 cardqty,
                 category.print_full(),
-                card.dependencies().len(),
-                card.dependents().len()
+                card.dependency_ids().len(),
+                card.dependent_ids().len()
             );
             match {
                 match card.get_review_type() {
@@ -1325,17 +1285,19 @@ fn draw_menu(stdout: &mut Stdout, items: Vec<&str>, optional: bool) -> Option<us
     }
 }
 
-pub fn view_last_modified_cards(stdout: &mut Stdout) -> Option<AnnoCard> {
-    let mut cards = AnnoCard::load_all();
-    AnnoCard::sort_by_last_modified(&mut cards);
+pub fn view_last_modified_cards(stdout: &mut Stdout) -> Option<SavedCard> {
+    let mut cards = SavedCard::load_all()
+        .into_iter()
+        .collect::<Vec<SavedCard>>();
+    SavedCard::sort_by_last_modified(&mut cards);
     cards.truncate(10);
     pick_item(stdout, "", &cards).cloned()
 }
 
-pub fn view_search_cards(stdout: &mut Stdout, cache: &mut CardLocationCache) {
+pub fn view_search_cards(stdout: &mut Stdout, cache: &mut CardCache) {
     loop {
         let Some((searchterm, _)) = read_user_input(stdout)else {return};
-        let mut cards = AnnoCard::search(searchterm);
+        let mut cards = SavedCard::search(searchterm);
         cards.truncate(10);
         let Some(picked_card) = pick_item(stdout, "", &cards).cloned() else {return};
 
@@ -1352,39 +1314,39 @@ pub fn view_search_cards(stdout: &mut Stdout, cache: &mut CardLocationCache) {
 
 pub fn add_dependency(
     stdout: &mut Stdout,
-    mut card: AnnoCard,
+    card: &mut SavedCard,
     category: Option<&Category>,
-    cache: &mut CardLocationCache,
-) -> Option<AnnoCard> {
-    let category = category.unwrap_or(&card.category());
+    cache: &mut CardCache,
+) -> Option<SavedCard> {
+    let category = category.unwrap_or_else(|| card.category());
     let category = &mut category.to_owned();
     let new_dependency = add_card(stdout, category, cache)?;
     card.set_dependency(new_dependency.id());
-    Some(card.update_card())
+    Some(new_dependency)
 }
 
 pub fn add_dependent(
     stdout: &mut Stdout,
-    mut card: AnnoCard,
+    card: &mut SavedCard,
     category: Option<&Category>,
-    cache: &mut CardLocationCache,
-) -> Option<AnnoCard> {
+    cache: &mut CardCache,
+) -> Option<SavedCard> {
     let mut category = category.cloned().unwrap_or_else(|| card.category().clone());
     let new_dependent = add_card(stdout, &mut category, cache)?;
     card.set_dependent(new_dependent.id());
-    Some(card.update_card())
+    Some(new_dependent)
 }
 
-pub fn pick_card_from_search(stdout: &mut Stdout) -> Option<AnnoCard> {
+pub fn pick_card_from_search(stdout: &mut Stdout) -> Option<SavedCard> {
     clear_window(stdout);
     move_upper_left(stdout);
     let input = read_user_input(stdout)?;
-    let cards = AnnoCard::search(input.0);
+    let cards = SavedCard::search(input.0);
     pick_item(stdout, "", &cards).cloned()
 }
 
-pub fn cooler_pick_card_from_search(stdout: &mut Stdout) -> Option<AnnoCard> {
+pub fn cooler_pick_card_from_search(stdout: &mut Stdout) -> Option<SavedCard> {
     let input = read_user_input(stdout)?;
-    let cards = AnnoCard::search(input.0);
+    let cards = SavedCard::search(input.0);
     pick_item(stdout, "", &cards).cloned()
 }

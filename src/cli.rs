@@ -2,7 +2,7 @@ use csv::Reader;
 use std::error::Error;
 
 use crate::{
-    card::{Card, CardLocationCache, Meta, Side},
+    card::{Card, CardCache, Meta, Side},
     categories::Category,
     media::AudioSource,
     paths::{get_import_csv, get_share_path},
@@ -57,10 +57,7 @@ pub fn read_csv() -> Result<(), Box<dyn Error>> {
         };
 
         let card = Card::new(front_side, back_side, Meta::default());
-        card.save_new_card(
-            &Category::import_category(),
-            &mut CardLocationCache::default(),
-        );
+        card.save_new_card(&Category::import_category(), &mut CardCache::default());
     }
 
     std::fs::rename(get_import_csv(), get_share_path().join("imported.csv")).unwrap();

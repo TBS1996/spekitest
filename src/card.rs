@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize, de};
 use toml::Value;
 use std::cmp::{Ordering, Reverse};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
 use std::fs::read_to_string;
 use std::path::{Path, PathBuf};
@@ -15,15 +15,52 @@ use crate::media::AudioSource;
 use crate::VisitStuff;
 use crate::{common::current_time, Id};
 
-pub type StrengthMap = HashMap<AnnoCard, Option<f32>>;
+pub type StrengthMap = HashMap<SavedCard, Option<f32>>;
 pub type RecallRate = f32;
 
 
 
 #[derive(Default)]
-pub struct CardCache(pub HashMap<Id, AnnoCard>);
+pub struct CardCache(pub HashMap<Id, SavedCard>);
 
 impl CardCache{
+    pub fn maybe_update(&mut self, id: &Id) {
+    let card_needs_update = match self.0.get(id) {
+        Some(cached_card) => {
+            // Get the file's last_modified time
+            let metadata = std::fs::metadata(cached_card.as_path()).unwrap();
+            let last_modified_time = system_time_as_unix_time( metadata.modified().unwrap());
+
+            // Check if the file has been modified since we cached it
+            last_modified_time > cached_card.last_modified
+        },
+        None => true, // If card isn't in the cache, then we definitely need to update
+    };
+
+    if card_needs_update {
+        // Read the card from the disk
+        // expensive! it'll comb through all the cards linearly.
+        let card = SavedCard::from_id(id).unwrap();
+        self.0.insert(*id, card);
+    }
+    }
+
+    pub fn get_owned(&mut self, id: &Id) -> SavedCard {
+        self.maybe_update(id);
+        self.get_ref(id).clone()
+    }
+
+    pub fn get_ref(&mut self, id: &Id) -> &SavedCard {
+        self.maybe_update(id);
+        self.0.get(id).unwrap()
+
+}
+    pub fn get_mut(&mut self, id: &Id) -> &mut SavedCard {
+        self.maybe_update(id);
+        self.0.get_mut(id).unwrap()
+
+}
+    
    pub fn new() -> Self {
        let mut cache = Self::default();
        cache.cache_all();
@@ -31,67 +68,20 @@ impl CardCache{
    } 
 
     fn cache_all(&mut self) {
-        let all_cards = AnnoCard::load_all();
+        let all_cards = SavedCard::load_all();
         for card in all_cards{
             self.cache_one(card);
         }
     }
     
-    fn cache_one(&mut self, card: AnnoCard) {
+    pub fn cache_one(&mut self, card: SavedCard) {
         self.0.insert(card.card.meta.id, card);
     }
-    
-    pub fn find_updated_card(&mut self, id: &Id) -> Option<(&AnnoCard, bool)> {
-        if let Some(card) = self.0.get(id) {
-            return Some((card, card.is_outdated()));
-        }
-        None
-    }
-    
-    pub fn get_or_fetch(&mut self, id: &Id) -> Option<&AnnoCard>{
-        if let Some((card, is_outdated)) = self.find_updated_card(id) {
-            if !is_outdated{
-                return Some(card);
-            } else {
-                match AnnoCard::from_id(id) {
-                    Some(_card) =>  {
-                        
-                    }
-                    None => return None,
-                }
-            }
-
-        }
-        
-        None
-        
-    }
 }
 
 
-#[derive(Default)]
-pub struct CardLocationCache(pub HashMap<Id, CardLocation>);
 
-impl CardLocationCache {
-   pub fn new() -> Self {
-       let mut cache = Self::default();
-       cache.cache_all();
-       cache
-   } 
-
-    fn cache_all(&mut self) {
-        let all_cards = AnnoCard::load_all();
-        for card in all_cards{
-            self.cache_one(&card);
-        }
-    }
-    
-    fn cache_one(&mut self, card: &AnnoCard) {
-        self.0.insert(card.card.meta.id, card.location.clone());
-    }
-}
-
-#[derive(Hash, Clone, Debug)]
+#[derive(Ord, PartialOrd, Eq, PartialEq, Hash, Clone, Debug)]
 pub struct CardLocation {
     pub file_name: OsString,
     pub category: Category,
@@ -137,31 +127,36 @@ impl CardFileData {
     }
 }
 
-#[derive(Clone, Hash, Debug)]
-pub struct AnnoCard {
+
+
+
+
+#[derive(Clone, Ord,PartialOrd, PartialEq, Eq, Hash, Debug)]
+pub struct SavedCard {
     card: Card,
     location: CardLocation,
     last_modified: Duration,
 }
 
 
-impl std::fmt::Display for AnnoCard {
+
+impl std::fmt::Display for SavedCard {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.card_as_ref().front.text)
+        write!(f, "{}", self.front_text())
     }
 }
 
-pub struct CardWithRecall(pub AnnoCard, Option<f32>);
+pub struct CardWithRecall(pub SavedCard, Option<f32>);
 
-impl From<AnnoCard> for Card {
-    fn from(value: AnnoCard) -> Self {
+impl From<SavedCard> for Card {
+    fn from(value: SavedCard) -> Self {
         value.card
     }
 }
 
-impl VisitStuff for AnnoCard {
+impl VisitStuff for SavedCard {
     fn get_children(&self) -> Vec<Self> {
-        AnnoCard::from_ids(self.card.meta.dependencies.clone().into_iter().collect())
+        SavedCard::from_ids(self.card.meta.dependencies.clone().into_iter().collect())
     }
 
     fn matches_predicate(&self) -> bool {
@@ -178,13 +173,70 @@ pub enum ReviewType {
 
 type GetIds = Box<dyn FnMut(Id) -> Vec<Id>>;
 
-impl AnnoCard {
+impl SavedCard {
+    
+    pub fn get_dependendents_cached<'a>(&'a self, cache: &'a CardCache) -> BTreeSet<&'a Self> {
+        let mut dependencies = BTreeSet::new();
+        let mut stack = VecDeque::new();
+        stack.push_back(self);
+
+        while let Some(card) = stack.pop_back() {
+            if !dependencies.contains(&card) {
+                dependencies.insert(card);
+
+                let card_dependencies = card.dependents(cache);
+                
+                for dependency in card_dependencies {
+                    stack.push_back(dependency);
+                }
+            }
+        }
+
+        dependencies
+    }
+    
+    pub fn get_dependencies_cached<'a>(&'a self, cache: &'a CardCache) -> BTreeSet<&'a Self> {
+        let mut dependencies = BTreeSet::new();
+        let mut stack = VecDeque::new();
+        stack.push_back(self);
+
+        while let Some(card) = stack.pop_back() {
+            if !dependencies.contains(&card) {
+                dependencies.insert(card);
+
+                let card_dependencies = card.dependencies(cache);
+                
+                for dependency in card_dependencies {
+                    stack.push_back(dependency);
+                }
+            }
+        }
+
+        dependencies
+    }
+
+    
+    pub fn reviews(&self) -> &Vec<Review> {
+        &self.card.history
+    }
+    
+pub fn calculate_memory_left(&self) -> Option<f32> {
+    let (Some(stability), Some(time_passed)) = (self.stability(), self.time_since_last_review())  else {
+        return None;
+    };
+    calculate_left_memory(time_passed, stability.to_owned()).into()
+}
+
     pub fn new(card: Card, location: CardLocation, last_modified: Duration) -> Self {
         Self {
             card,
             location,
             last_modified,
         }
+    }
+    
+    pub fn get_unfinished_dependent_qty(&self, cache: &mut CardCache) -> usize {
+        self.get_dependendents_cached(cache).iter().filter(|card|card.is_finished()).count()
     }
     
     pub fn category(&self) -> &Category {
@@ -247,13 +299,36 @@ impl AnnoCard {
         &self.card.meta.id
     }
     
-    pub fn dependents(&self) -> &BTreeSet<Id> {
+    pub fn dependent_ids(&self) -> &BTreeSet<Id> {
         &self.card.meta.dependents
     }
 
-    pub fn dependencies(&self) -> &BTreeSet<Id> {
+    pub fn dependency_ids(&self) -> &BTreeSet<Id> {
         &self.card.meta.dependencies
     }
+
+
+
+    pub fn dependents<'a>(&'a self, cache: &'a  CardCache) -> BTreeSet<&'a Self> {
+        let mut set = BTreeSet::new();
+        for id in self.dependent_ids(){
+                set.insert(cache.0.get(id).unwrap());
+    }
+    set
+}
+
+
+
+    pub fn dependencies<'a>(&'a self, cache: &'a  CardCache) -> BTreeSet<&'a Self> {
+            let mut set = BTreeSet::new();
+            for id in self.dependency_ids(){
+                // this sucks
+                set.insert(cache.0.get(id).unwrap());
+            }
+        set
+    }
+
+
     
     pub fn set_dependent(&mut self, id: &Id) {
         self.card.meta.dependents.insert(*id);
@@ -262,6 +337,20 @@ impl AnnoCard {
         let mut other_card = Self::from_id(id).unwrap();
         other_card.card.meta.dependencies.insert(self.card.meta.id);
         other_card.update_card();
+    }
+    
+    /// a = span means foo
+    /// b = change span desc by..
+    /// inserted: c = what is a span desc?
+    
+    pub fn insert_dependency_raw(dependent_id: &Id, dependency_id: &Id, insertion_id: &Id) {
+        let mut dependent = Self::from_id(dependent_id).unwrap();
+        let mut insertion = Self::from_id(insertion_id).unwrap();
+        
+        dependent.remove_dependency(dependency_id);
+        dependent.set_dependency(insertion_id);
+        insertion.set_dependency(dependency_id);
+        
     }
 
     pub fn set_dependency(&mut self, id: &Id) {
@@ -291,85 +380,76 @@ impl AnnoCard {
     }
     
 
-    pub fn get_dependencies(& self, cache: &mut CardLocationCache) -> Vec<Self> {
-        let mut get_children: Box<dyn FnMut(Id, &mut CardLocationCache) -> Vec<Id>> = Box::new(|card_id: Id, cache: &mut CardLocationCache| {
-            AnnoCard::from_cached_id(&card_id, cache)
-                .card
-                .meta
-                .dependencies
-                .into_iter()
-                .collect()
-        });
-        let ids = match visit_collect_all_descendants(self.card.meta.id, &mut get_children, cache)  {
-            Ok(ids) => ids,
-            Err(id) => {
-                let card = AnnoCard::from_id(&id).unwrap();
-                panic!("Infinite recursion found with: {:?}", card);
-            }
-        };
-
-        let mut hey = vec![];
-
-        for id in ids {
-            hey.push(AnnoCard::from_id(&id).unwrap());
-        }
-        hey
-    }
-
-    pub fn get_dependents(&self, cache: &mut CardLocationCache) -> Vec<Self> {
-        let mut get_children: Box<dyn FnMut(Id, &mut CardLocationCache) -> Vec<Id>> = Box::new(|card_id: Id, cache: &mut CardLocationCache| {
-            AnnoCard::from_cached_id(&card_id, cache)
-                .card
-                .meta
-                .dependents
-                .into_iter()
-                .collect()
-        });
-        
-        let ids = match visit_collect_all_descendants(self.card.meta.id, &mut get_children, cache)  {
-            Ok(ids) => ids,
-            Err(id) => {
-                let card = AnnoCard::from_id(&id).unwrap();
-                panic!("Infinite recursion found with: {:?}", card);
-            }
-        };
-
-        let mut hey = vec![];
-
-        for id in ids {
-            hey.push(AnnoCard::from_id(&id).unwrap());
-        }
-        hey
-    }
     
 
     pub fn as_path(&self) -> PathBuf {
         self.location.as_path()
     }
     
-    pub fn update_cache(&self, cache: &mut CardLocationCache) {
-        cache.cache_one(self);
-    }
 
-    pub fn pending_filter(&self, cache: &mut CardLocationCache) -> bool {
+    pub fn pending_filter(&self, cache: &mut CardCache) -> bool {
         self.card.meta.stability.is_none()
-            && self.card.meta.suspended.is_suspended()
-            && self.card.meta.finished
-            && self.is_confidently_resolved(cache)
+            && !self.is_suspended()
+            && self.is_finished()
+            && self.is_resolved(cache)
     }
 
-    pub fn unfinished_filter(&self, cache: &mut CardLocationCache) -> bool {
-        !self.card.meta.finished && !self.card.meta.suspended.is_suspended() && self.is_resolved(cache)
+    pub fn unfinished_filter(&self, cache: &mut CardCache) -> bool {
+        !self.is_finished() && !self.is_suspended() && self.is_resolved(cache)
     }
 
-    pub fn review_filter(&self, cache: &mut CardLocationCache) -> bool {
+
+    pub fn review_filter_with_reason(&self, cache: &mut CardCache) -> bool {
+        let mut reasons = vec![];
+        let mut output = true;
         match (self.card.meta.stability, self.card.time_since_last_review()) {
             (Some(stability), Some(last_review_time)) => {
-                self.card.meta.finished
-                    && self.card.meta.suspended == IsSuspended::False
+                if !self.is_finished(){
+                    output = false;
+                    reasons.push("Card not finished");
+
+                }
+                
+                if self.is_suspended(){
+                    output = false;
+                    reasons.push("Card suspended");
+                }
+                
+                
+                if last_review_time < Duration::from_secs(60){
+                    output = false;
+                    reasons.push("too recent review");
+                }
+                
+                if stability > last_review_time {
+                    output = false;
+                    reasons.push("Card not ready yet for review");
+                }
+                
+                if !self.is_confidently_resolved(cache) {
+                    output = false;
+                    reasons.push("Card not ready yet for review");
+                }
+            }
+            (_, _) => {
+                output = false;
+                reasons.push("card still pending");
+            },
+        };
+        
+        dbg!("@@@@@@@@@@@@@", reasons);
+        
+        output
+    }
+
+    pub fn review_filter(&self, cache: &mut CardCache) -> bool {
+        match (self.card.meta.stability, self.card.time_since_last_review()) {
+            (Some(stability), Some(last_review_time)) => {
+                self.is_finished()
+                    && !self.is_suspended()
                     && last_review_time > Duration::from_secs(60) // Lets not review if its less than a minute since last time
                     && stability < last_review_time
-                    && self.is_confidently_resolved(cache)
+                    && self.is_resolved(cache)
             }
             (_, _) => false,
         }
@@ -393,27 +473,38 @@ impl AnnoCard {
     }
 
 
-    pub fn is_resolved(&self, cache: &mut CardLocationCache) -> bool {
-        self.get_dependencies(cache)
+    pub fn is_resolved(&self, cache: &mut CardCache) -> bool {
+        let before = current_time();
+        let x = self.get_dependencies_cached(cache)
             .iter()
-            .all(|card| card.card.meta.finished)
+            .all(|card| card.card.meta.finished);
+        x
     }
 
     /// Checks that its dependencies are not only marked finished, but they're also strong memories.
-    pub fn is_confidently_resolved(&self, cache: &mut CardLocationCache) -> bool {
+    pub fn is_confidently_resolved(&self, cache: &mut CardCache) -> bool {
         let min_stability = Duration::from_secs(86400 * 2);
         let min_recall: f32 = 0.95;
+        let dependencies = self.get_dependencies_cached(cache);
+        let mut dbgshit = vec![];
+      //  dbg!("##############", self.front_text());
+        for dep in dependencies{
+            dbgshit.push(format!("{}: {}\t", dep.front_text(), dep.is_finished()));
+        }
+     //   dbg!(dbgshit);
 
-        self.get_dependencies(cache).iter().all(|card| {
+        let x = self.get_dependencies_cached(cache).iter().all(|card| {
             let (Some(stability), Some(recall)) = (card.card.meta.stability, card.card.recall_rate()) else {return false};
             
             card.card.meta.finished && stability > min_stability && recall > min_recall
-        })
+        });
+    //    dbg!("$$", &x, "$$");
+        x
     }
 
     /// Moves card by deleting it and then creating it again in a new location
     /// warning: will refresh file name
-    pub fn move_card(self, destination: &Category, cache: &mut CardLocationCache) -> Self {
+    pub fn move_card(self, destination: &Category, cache: &mut CardCache) -> Self {
         if self.location.category == *destination {
             return self;
         }
@@ -432,7 +523,7 @@ impl AnnoCard {
         }
     }
 
-    pub fn delete(self, cache: &mut CardLocationCache) {
+    pub fn delete(self, cache: &mut CardCache) {
         cache.0.remove(&self.card.meta.id);
 
         let path = self.as_path();
@@ -441,22 +532,22 @@ impl AnnoCard {
         let self_id = self.card.meta.id;
         
         for dependency in self.card.meta.dependencies {
-            let Some(mut dependency) = AnnoCard::from_id(&dependency) else {continue};
+            let Some(mut dependency) = SavedCard::from_id(&dependency) else {continue};
             dependency.card.meta.dependents.remove(&self_id);
             dependency.update_card();
         }
         
         
         for dependent in self.card.meta.dependents {
-            let Some(mut dependent) = AnnoCard::from_id(&dependent) else {continue};
+            let Some(mut dependent) = SavedCard::from_id(&dependent) else {continue};
             dependent.card.meta.dependencies.remove(&self_id);
             dependent.update_card();
         }
 
     }
 
-    pub fn get_cards_from_category_recursively(category: &Category) -> Vec<Self> {
-        let mut cards = vec![];
+    pub fn get_cards_from_category_recursively(category: &Category) -> HashSet<Self> {
+        let mut cards = HashSet::new();
         let cats = category.get_following_categories();
         for cat in cats {
             cards.extend(cat.get_containing_cards());
@@ -486,7 +577,7 @@ impl AnnoCard {
     }
     
         
-    pub fn search_in_cards<'a>(input: &'a str, cards: &'a Vec<AnnoCard>) -> Vec<&'a AnnoCard> {
+    pub fn search_in_cards<'a>(input: &'a str, cards: &'a HashSet<SavedCard>) -> Vec<&'a SavedCard> {
         cards
         .iter()
         .filter(|card| {
@@ -511,25 +602,13 @@ impl AnnoCard {
         vec
     }
     
-    pub fn from_cached_id(id: &Id, cache: &mut CardLocationCache) -> Self {
-        let Some(location) = cache.0.get(id) else {
-            let card = Self::from_id(id);
-            panic!("oh shit, didn't find the card: {:?} from this id: {}", card, id);
-        };
-
-        Self::from_location(location)
-    }
-    
-    pub fn from_location(location: &CardLocation) -> Self {
-        Self::from_path(&location.as_path())
-    }
 
     pub fn from_id(id: &Id) -> Option<Self> {
         Self::load_all()
             .into_iter()
             .find(|card| &card.card.meta.id == id)
     }
-    pub fn load_all() -> Vec<Self> {
+    pub fn load_all() -> HashSet<Self> {
         Self::get_cards_from_category_recursively(&Category::root())
     }
 
@@ -596,7 +675,7 @@ impl AnnoCard {
 
         std::fs::write(&path, toml).unwrap();
 
-        AnnoCard::from_path(path.as_path())
+        SavedCard::from_path(path.as_path())
     }
 
     pub fn refresh(&mut self) {
@@ -612,14 +691,23 @@ impl AnnoCard {
     }
 }
 
-#[derive(Hash, Deserialize, Serialize, Debug, Default, Clone)]
+struct NewCard{
+    front: String,
+    back: String,
+    front_img: Option<PathBuf>,
+    back_img: Option<PathBuf>,
+}
+
+
+#[derive(Ord, PartialOrd, Eq, Hash, PartialEq, Deserialize, Serialize, Debug, Default, Clone)]
 pub struct Card {
     pub front: Side,
     pub back: Side,
     pub meta: Meta,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history: Vec<Review>,
 }
+
 
 // public
 impl Card {
@@ -664,7 +752,7 @@ impl Card {
         current_unix.checked_sub(last_unix)
     }
 
-    pub fn save_new_card(self, category: &Category, cache: &mut CardLocationCache) -> AnnoCard {
+    pub fn save_new_card(self, category: &Category, cache: &mut CardCache) -> SavedCard {
         let toml = toml::to_string(&self).unwrap();
         std::fs::create_dir_all(category.as_path()).unwrap();
         let max_char_len = 40;
@@ -678,8 +766,8 @@ impl Card {
 
         std::fs::write(&path, toml).unwrap();
 
-        let full_card = AnnoCard::from_path(path.as_path());
-        full_card.update_cache(cache);
+        let full_card = SavedCard::from_path(path.as_path());
+        cache.cache_one(full_card.clone());
         full_card
     }
 
@@ -694,7 +782,7 @@ impl Card {
     }
 }
 
-#[derive(Hash, Deserialize, Serialize, Debug, Default, Clone)]
+#[derive(Ord, PartialOrd, Eq, PartialEq, Hash, Deserialize, Serialize, Debug, Default, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum Grade {
     // No recall, not even when you saw the answer.
@@ -741,10 +829,9 @@ impl std::str::FromStr for Grade {
 
 use crate::common::{
     open_file_with_vim, serde_duration_as_secs, system_time_as_unix_time, truncate_string,
-    visit_collect_all_descendants,
 };
 
-#[derive(Hash, Deserialize, Clone, Serialize, Debug, Default)]
+#[derive(Ord, PartialOrd, Eq, PartialEq, Hash, Deserialize, Clone, Serialize, Debug, Default)]
 pub struct Review {
     // When (unix time) did the review take place?
     #[serde(with = "serde_duration_as_secs")]
@@ -766,7 +853,7 @@ impl Review {
     }
 }
 
-#[derive(Hash, Deserialize, Clone, Serialize, Debug, Default)]
+#[derive(Ord, PartialOrd, Eq, PartialEq, Hash, Deserialize, Clone, Serialize, Debug, Default)]
 pub struct Side {
     pub text: String,
     #[serde(flatten)]
@@ -775,9 +862,10 @@ pub struct Side {
     //pub image: ImagePath,
 }
 
+
 use serde::de::{Deserializer};
 
-#[derive(Hash, Debug, Clone, PartialEq)]
+#[derive(Ord, PartialOrd, Eq, PartialEq, Hash, Debug, Clone)]
 pub enum IsSuspended{
     False,
     True,
@@ -791,6 +879,12 @@ impl From<bool> for IsSuspended{
             true => Self::True,
             false => Self::False,
         }
+    }
+}
+
+impl Default for IsSuspended {
+    fn default() -> Self {
+        Self::False
     }
 }
 
@@ -842,7 +936,7 @@ impl<'de> Deserialize<'de> for IsSuspended {
 
         match value {
             Value::Boolean(b) => Ok(b.into()),
-                        Value::Integer(i) => {
+            Value::Integer(i) => {
                 if let Ok(secs) = std::convert::TryInto::<u64>::try_into(i) {
                     Ok(IsSuspended::TrueUntil(Duration::from_secs(secs)).verify_time())
                 } else {
@@ -856,14 +950,21 @@ impl<'de> Deserialize<'de> for IsSuspended {
 }
 
 
+fn default_finished() -> bool {
+    true
+}
 
 
-#[derive(Hash, Deserialize, Serialize, Debug, Clone)]
+#[derive(Ord, PartialOrd, Eq, PartialEq, Hash, Deserialize, Serialize, Debug, Clone)]
 pub struct Meta {
     pub id: Id,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub dependencies: BTreeSet<Id>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub dependents: BTreeSet<Id>,
+    #[serde(default)]
     pub suspended: IsSuspended,
+    #[serde(default = "default_finished")]
     pub finished: bool,
     #[serde(
         default,
@@ -871,6 +972,7 @@ pub struct Meta {
         deserialize_with = "optional_days_to_duration"
     )]
     pub stability: Option<Duration>,
+    #[serde(default)]
     pub tags: BTreeSet<String>,
 }
 
@@ -888,6 +990,8 @@ impl Default for Meta {
     }
 }
 
+const SECONDS_PER_DAY: f32 = 24.0 * 60.0 * 60.0;
+
 fn optional_duration_to_days<S>(
     duration: &Option<Duration>,
     serializer: S,
@@ -896,7 +1000,7 @@ where
     S: serde::Serializer,
 {
     match duration {
-        Some(d) => serializer.serialize_some(&(d.as_secs_f32() / (24.0 * 60.0 * 60.0))),
+        Some(d) => serializer.serialize_some(&(d.as_secs_f32() / SECONDS_PER_DAY)),
         None => serializer.serialize_none(),
     }
 }
@@ -907,19 +1011,12 @@ where
 {
     let opt: Option<f32> = Option::deserialize(deserializer)?;
     match opt {
-        Some(f) => Ok(Some(Duration::from_secs_f32(f * 24.0 * 60.0 * 60.0))),
+        Some(f) => Ok(Some(Duration::from_secs_f32(f * SECONDS_PER_DAY))),
         None => Ok(None),
     }
 }
 
 
-pub fn ccalculate_left_memory(days_passed: Duration, stability: Duration) -> f32 {
-    let base: f32 = 0.9;
-    let ratio = days_passed.as_secs_f32() / stability.as_secs_f32();
-    let lambda = -base.ln();
-
-    (lambda * ratio).exp() / lambda
-}
 
 pub fn calculate_left_memory(t1: Duration, stability: Duration) -> f32 {
     let base: f32 = 0.9;
@@ -933,6 +1030,12 @@ pub fn calculate_left_memory(t1: Duration, stability: Duration) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    
+    #[test]
+    fn foobar(){
+        let vec : Vec<i32>= vec![];
+        dbg!(vec.iter().all(|x|x==&0));
+    }
     
     #[test]
     fn test_memory_integral(){

@@ -4,7 +4,7 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use uuid::Uuid;
 
-use crate::card::{AnnoCard, Card};
+use crate::card::{Card, SavedCard};
 use crate::categories::Category;
 use crate::paths::get_cards_path;
 use crate::Id;
@@ -50,7 +50,7 @@ pub fn get_card_from_id(id: Id, category: &Category) -> Option<Card> {
         let path = entry.path();
 
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("toml") {
-            let card = AnnoCard::from_path(path.as_path()).into_card();
+            let card = SavedCard::from_path(path.as_path()).into_card();
             if card.meta.id == id {
                 return Some(card);
             }
@@ -67,7 +67,7 @@ pub fn get_path_from_id(id: Id, category: &Category) -> Option<PathBuf> {
         let path = entry.path();
 
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("toml") {
-            let card = AnnoCard::from_path(path.as_path()).into_card();
+            let card = SavedCard::from_path(path.as_path()).into_card();
             if card.meta.id == id {
                 return Some(path);
             }
@@ -94,7 +94,7 @@ pub fn _get_card_ids_from_category(category: &Category) -> Vec<Id> {
     toml_files
 }
 
-pub fn get_all_cards_full() -> Vec<AnnoCard> {
+pub fn get_all_cards_full() -> Vec<SavedCard> {
     let cats = Category::load_all().unwrap();
     let mut cards = vec![];
 
