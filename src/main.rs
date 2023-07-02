@@ -11,7 +11,6 @@ mod categories;
 mod cli;
 mod common;
 mod config;
-mod folders;
 mod frontend;
 mod git;
 mod media;

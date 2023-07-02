@@ -1,5 +1,5 @@
 use crate::card::{CardCache, CardLocation, SavedCard};
-use crate::folders::get_last_modified;
+use crate::common::get_last_modified;
 use crate::paths::{self, get_cards_path};
 use std::collections::{BTreeSet, HashSet};
 use std::fs::{self, File};

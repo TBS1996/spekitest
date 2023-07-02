@@ -8,9 +8,9 @@ use crate::card::{
     calculate_left_memory, Card, CardCache, IsSuspended, ReviewType, Reviews, SavedCard,
 };
 use crate::categories::Category;
+use crate::common::view_cards_in_explorer;
 use crate::common::{current_time, open_file_with_vim, randvec, truncate_string};
 use crate::config::Config;
-use crate::folders::view_cards_in_explorer;
 use crate::git::git_save;
 use crate::paths::get_share_path;
 
