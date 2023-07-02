@@ -23,7 +23,7 @@ impl AudioSource {
         }
     }
 
-    pub fn play_audio(&mut self) -> Option<std::thread::JoinHandle<()>> {
+    pub fn _play_audio(&mut self) -> Option<std::thread::JoinHandle<()>> {
         if !Config::load().ok()?.play_audio {
             return None;
         }

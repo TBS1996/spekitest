@@ -1,12 +1,10 @@
-use std::fmt::{Debug, Display};
+use std::fmt::Display;
 
 use std::io::{self, ErrorKind};
 
 use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, SystemTime};
-
-use crate::frontend::move_far_left;
 
 pub fn current_time() -> Duration {
     system_time_as_unix_time(SystemTime::now()) // + Duration::from_secs(8644000)
@@ -85,57 +83,6 @@ pub fn randvec<T>(mut v: Vec<T>) -> Vec<T> {
         randomized.push(popped);
     }
     randomized
-}
-
-type GetChildren<T> = Box<dyn FnMut(&T) -> Vec<T>>;
-
-type GetKids<T> = Box<dyn FnMut(T) -> Vec<T>>;
-
-pub fn visit_check_any_match_predicate<T: Sized>(
-    ty: &T,
-    predicate: &mut Box<dyn FnMut(&T) -> bool>,
-    get_children: &mut GetChildren<T>,
-) -> bool {
-    let kids = get_children(ty);
-    for kid in &kids {
-        if predicate(kid) || visit_check_any_match_predicate(kid, predicate, get_children) {
-            return true;
-        }
-    }
-    false
-}
-
-pub fn double_vec<T: Clone>(vec: Vec<T>) -> Vec<T> {
-    let mut output = vec![];
-    for v in vec {
-        output.push(v.clone());
-        output.push(v);
-    }
-    output
-}
-
-pub fn interpolate(input: Vec<f64>) -> Vec<f64> {
-    if input.len() < 2 {
-        return input.to_vec();
-    }
-
-    let mut result = Vec::new();
-
-    for window in input.windows(2) {
-        let start = window[0];
-        let end = window[1];
-        let diff = end - start;
-
-        // For this window, generate the interpolated values
-        for i in 0..=diff as usize {
-            result.push(start + i as f64);
-        }
-    }
-
-    // Push the last value, as the window iteration will miss it
-    result.push(*input.last().unwrap());
-
-    result
 }
 
 #[cfg(test)]

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use cli::read_csv;
 use config::Config;
 

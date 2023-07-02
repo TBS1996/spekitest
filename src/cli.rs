@@ -16,15 +16,6 @@ fn empty_str_optional(s: String) -> Option<String> {
     }
 }
 
-struct CsvFields {
-    front: String,
-    back: String,
-    front_url: Option<String>,
-    back_url: Option<String>,
-    front_img: Option<String>,
-    back_img: Option<String>,
-}
-
 pub fn read_csv() -> Result<(), Box<dyn Error>> {
     let path = crate::paths::get_import_csv();
     if !path.exists() {

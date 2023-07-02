@@ -1,4 +1,4 @@
-use crate::card::{Card, CardCache, CardLocation, SavedCard};
+use crate::card::{CardCache, CardLocation, SavedCard};
 use crate::folders::get_last_modified;
 use crate::paths::{self, get_cards_path};
 use std::collections::{BTreeSet, HashSet};
@@ -10,6 +10,7 @@ use std::path::PathBuf;
 // Represent the category that a card is in, can be nested
 #[derive(Ord, PartialOrd, Eq, Hash, Debug, Clone, Default, PartialEq)]
 pub struct Category(pub Vec<String>);
+pub type CardFilter = Box<dyn FnMut(&SavedCard, &mut CardCache) -> bool>;
 
 fn read_lines<P>(filename: P) -> io::Result<Vec<String>>
 where
@@ -113,11 +114,6 @@ impl Category {
             .collect()
     }
 
-    pub fn create(&self) {
-        let path = self.as_path();
-        std::fs::create_dir_all(path).unwrap();
-    }
-
     pub fn print_it(&self) -> String {
         self.0.last().unwrap_or(&"root".to_string()).clone()
     }
@@ -194,7 +190,7 @@ impl Category {
 
     fn get_cards_with_filter(
         &self,
-        mut filter: Box<dyn FnMut(&SavedCard, &mut CardCache) -> bool>,
+        mut filter: CardFilter,
         cache: &mut CardCache,
     ) -> Vec<SavedCard> {
         self.get_containing_cards()
