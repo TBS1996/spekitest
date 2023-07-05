@@ -42,21 +42,6 @@ pub mod paths {
     }
 }
 
-/// DFS where it checks if any descendant matches a predicate
-pub trait VisitStuff: Sized {
-    fn get_children(&self) -> Vec<Self>;
-    fn matches_predicate(&self) -> bool;
-    fn visit(&self) -> bool {
-        let kids = self.get_children();
-        for kid in &kids {
-            if kid.matches_predicate() || kid.visit() {
-                return true;
-            }
-        }
-        false
-    }
-}
-
 type Id = Uuid;
 
 fn main() {
