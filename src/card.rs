@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize, de, Serializer};
 use toml::Value;
-use std::borrow::BorrowMut;
+
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use uuid::Uuid;
 
-use std::cell::{RefCell, Ref};
+
 use std::sync::Arc;
 
 use crate::categories::Category;
@@ -65,6 +65,7 @@ impl CardCache{
         self.0.insert(*id, card.into());
     }
     
+    #[allow(dead_code)]
     pub fn remove(&mut self, id: &Id) {
         self.0.remove(id);
     }
@@ -247,6 +248,7 @@ impl SavedCard {
         self.persist();
     } 
     
+    #[allow(dead_code)]
     pub fn priority(&self) -> &Priority {
         &self.card.meta.priority
     }
@@ -286,14 +288,11 @@ impl SavedCard {
         &self.location.category
     }
     
-    pub fn last_modified(&self) -> &Duration {
-        &self.last_modified
-    }
-    
     pub fn front_text(&self) -> &str {
         &self.card.front.text
     }
     
+    #[allow(dead_code)]
     pub fn is_pending(&self) -> bool {
         self.card.history.is_empty()
     }
@@ -372,7 +371,7 @@ impl SavedCard {
     
     pub fn _insert_dependency_raw(dependent_id: &Id, dependency_id: &Id, insertion_id: &Id, cache: &mut CardCache) {
         let mut dependent = Self::from_id(dependent_id).unwrap();
-        let mut insertion = Self::from_id(insertion_id).unwrap();
+        let _insertion = Self::from_id(insertion_id).unwrap();
         
         dependent.remove_dependency(dependency_id, cache);
         //dependent.set_dependency(insertion_id);
@@ -389,7 +388,7 @@ impl SavedCard {
         other_card.persist();
     }
     
-    pub fn remove_dependency(&mut self, id: &Id, cache: &mut CardCache) {
+    pub fn remove_dependency(&mut self, id: &Id, _cache: &mut CardCache) {
         self.card.meta.dependencies.remove(id);
         self.persist();
         
@@ -400,7 +399,7 @@ impl SavedCard {
     }
     
     
-    pub fn remove_dependent(&mut self, id: &Id, cache: &mut CardCache) {
+    pub fn remove_dependent(&mut self, id: &Id, _cache: &mut CardCache) {
         self.card.meta.dependencies.remove(id);
         self.persist();
         
@@ -476,7 +475,7 @@ impl SavedCard {
         let min_recall: f32 = 0.95;
         let dependencies = cache.recursive_dependencies(self.id());
       //  dbg!("##############", self.front_text());
-        for dep in dependencies{
+        for _dep in dependencies{
          //   dbgshit.push(format!("{}: {}\t", dep.front_text(), dep.is_finished()));
         }
      //   dbg!(dbgshit);
@@ -542,28 +541,6 @@ impl SavedCard {
         }
         cards
     }
-
-    pub fn search(input: String) -> Vec<Self> {
-        let mut cards: Vec<Self> = Self::load_all()
-            .into_iter()
-            .filter(|card| {
-                card.card
-                    .front
-                    .text
-                    .to_ascii_lowercase()
-                    .contains(&input.to_ascii_lowercase())
-                    || card
-                        .card
-                        .back
-                        .text
-                        .to_ascii_lowercase()
-                        .contains(&input.to_ascii_lowercase())
-            })
-            .collect();
-        Self::sort_by_last_modified(&mut cards);
-        cards
-    }
-    
         
     pub fn search_in_cards<'a>(input: &'a str, cards: &'a HashSet<SavedCard>) -> Vec<&'a SavedCard> {
         cards
@@ -625,11 +602,6 @@ impl SavedCard {
     pub fn card_as_ref(&self) -> &Card {
         &self.card
     }
-
-    pub fn card_as_mut_ref(&mut self) -> &mut Card {
-        &mut self.card
-    }
-
 
     fn persist(&self) -> Self {
         let path = self.as_path();
@@ -738,29 +710,15 @@ pub enum Grade {
 
 impl Grade {
     pub fn get_factor(&self) -> f32 {
-        let factor = match self {
+        match self {
             Grade::None => 0.1,
             Grade::Late => 0.25,
             Grade::Some => 2.,
             Grade::Perfect => 3.,
-        };
-        factor
+        }
         //factor * Self::randomize_factor()
     }
     
-    pub fn success(&self) -> bool {
-        match self {
-            Grade::None => false,
-            Grade::Late => false,
-            Grade::Some => true,
-            Grade::Perfect => true,
-        }
-    }
-
-    // gets a random number from 0.8 to 1.2
-    fn randomize_factor() -> f32 {
-        1.2 - (((current_time().as_micros() % 40) as f32) / 100.)
-    }
 }
 
 impl std::str::FromStr for Grade {
@@ -842,15 +800,14 @@ pub fn new_stability(grade: &Grade, time_passed: Option<Duration>, current_stabi
     let time_passed = time_passed.unwrap_or(Duration::from_secs(86400));
 
     if grade_factor < 1.0 { // the grade is wrong
-        return time_passed.mul_f32(grade_factor).min(current_stability);
+        time_passed.mul_f32(grade_factor).min(current_stability)
     } else { // the grade is correct
         let alternative_stability = time_passed.mul_f32(grade_factor);
         if alternative_stability > current_stability {
-            return alternative_stability;
+             alternative_stability
         } else {
             let interpolation_ratio = time_passed.as_secs_f32() / current_stability.as_secs_f32() * grade_factor;
-            let interpolation = current_stability + Duration::from_secs_f32(current_stability.as_secs_f32() * interpolation_ratio);
-            return interpolation;
+            current_stability + Duration::from_secs_f32(current_stability.as_secs_f32() * interpolation_ratio)
         }
     }
 }

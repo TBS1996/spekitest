@@ -10,7 +10,7 @@ use std::io::{self, ErrorKind};
 use std::time::SystemTime;
 
 pub fn current_time() -> Duration {
-    system_time_as_unix_time(SystemTime::now()) + Duration::from_secs(86400 * 1)
+    system_time_as_unix_time(SystemTime::now()) + Duration::from_secs(86400)
 }
 
 pub fn system_time_as_unix_time(time: SystemTime) -> Duration {

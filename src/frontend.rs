@@ -187,7 +187,7 @@ pub fn health_check(stdout: &mut Stdout, cache: &mut CardCache) {
     move_upper_left(stdout);
 
     for mut card in all_cards {
-        let id = card.id().to_owned();
+        let _id = card.id().to_owned();
         let dependencies = card.dependency_ids().to_owned();
         let dependents = card.dependent_ids().to_owned();
 
@@ -214,7 +214,7 @@ pub fn health_check(stdout: &mut Stdout, cache: &mut CardCache) {
             //dependency.set_dependent(&id, cache);
         }
 
-        for dependent in card.dependent_ids() {
+        for _dependent in card.dependent_ids() {
             //let mut dependent = cache._get_owned(dependent);
             //dependent.set_dependency(&id, cache);
         }
@@ -462,7 +462,7 @@ pub fn run() {
             }
             4 => {
                 let mut cards: Vec<SavedCard> = SavedCard::load_all().into_iter().collect();
-                cards.sort_by_key(|card| card.last_modified().to_owned());
+                SavedCard::sort_by_last_modified(&mut cards);
                 cards.reverse();
                 let cards = cards.into_iter().map(|card| card.id().to_owned()).collect();
                 view_cards(&mut stdout, cards, &mut cache);
@@ -1017,6 +1017,8 @@ fn view_cards(stdout: &mut Stdout, mut cards: Vec<Id>, cache: &mut CardCache) {
                 };
 
                 let moved_card = cache.get_owned(card.id()).move_card(&folder, cache);
+                let id = moved_card.id().to_owned();
+                cache.insert(&id, moved_card);
             }
             KeyCode::Char('e') => {
                 card.edit_with_vim();
