@@ -18,6 +18,8 @@ use crate::Id;
 use ascii_tree::write_tree;
 use ascii_tree::Tree::Node;
 
+fn card_options(stdout: &mut Stdout, card: Id, cache: &mut CardCache) {}
+
 fn view_all_cards(stdout: &mut Stdout, cache: &mut CardCache) {
     let cards = cache.all_ids();
     view_cards(stdout, cards, cache);
@@ -188,6 +190,12 @@ pub fn suspend_card(stdout: &mut Stdout, card: &Id, cache: &mut CardCache) {
 
     loop {
         if let Some((input, _)) = read_user_input(stdout) {
+            if input.is_empty() {
+                card.set_suspended(IsSuspended::True);
+                draw_message(stdout, "Card suspended indefinitely");
+                return;
+            }
+
             if let Ok(num) = input.parse::<f32>() {
                 let days = Duration::from_secs_f32(86400. * num);
                 let until = days + current_time();

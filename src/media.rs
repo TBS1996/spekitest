@@ -1,6 +1,7 @@
 use std::{fs::File, io::BufReader, path::PathBuf};
 
-use rodio::Source;
+//use rodio::Source;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{config::Config, paths::get_media_path};
@@ -22,6 +23,8 @@ impl AudioSource {
             url_backup,
         }
     }
+
+    /*
 
     pub fn _play_audio(&mut self) -> Option<std::thread::JoinHandle<()>> {
         if !Config::load().ok()?.play_audio {
@@ -46,8 +49,10 @@ impl AudioSource {
 
         Some(handle)
     }
+    */
 }
 
+/*
 impl GetMedia for AudioSource {
     fn local_name(&self) -> Option<String> {
         self.local_name.clone()
@@ -118,3 +123,4 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 }
+*/

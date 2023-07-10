@@ -950,17 +950,31 @@ impl Reviews{
 
         let recall_rate = self.recall_rate()?;
 
-        let current_strength = self.strength()?.as_secs_f32() / 86400. ;
-        let failstrength = self.next_strength(Grade::Late).as_secs_f32() / 86400. ;
-        let winstrength = self.next_strength(Grade::Some).as_secs_f32() / 86400.;
+        let current_strength = self.strength()?;
+
+        // The estimated strength if you fail at this point in time.
+        let fail_strength = self.next_strength(Grade::Late);
+        
+        // The estimated strength if you succeed at this point in time.
+        let win_strength = self.next_strength(Grade::Some);
+        
+        Some(Self::pure_expected_gain(recall_rate, current_strength, fail_strength, win_strength))
         
         
+    }
+    
+    /// trying to extract more pure functions
+    fn pure_expected_gain(recall_rate: f32, current_strength: Duration, fail_strength: Duration, win_strength: Duration) -> f32{
+        let current_strength = current_strength.as_secs_f32() / 86400.;
+        let winstrength = win_strength.as_secs_f32() / 86400.;
+        let failstrength = fail_strength.as_secs_f32() / 86400.;
+
         let expected_win = (winstrength) * recall_rate;
         let expected_loss = (failstrength) * (1. - recall_rate);
         
         let expected_strength = expected_win + expected_loss;
         
-        (expected_strength / current_strength).into()
+        expected_strength / current_strength
     }
 
     pub fn is_empty(&self) -> bool{

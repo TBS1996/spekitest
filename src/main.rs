@@ -1,4 +1,3 @@
-use cli::read_csv;
 use config::Config;
 
 use frontend::run;
@@ -47,10 +46,8 @@ type Id = Uuid;
 fn main() {
     std::fs::create_dir_all(paths::get_cards_path()).unwrap();
     std::fs::create_dir_all(paths::get_share_path().join("media/")).unwrap();
-    read_csv().unwrap();
 
     let config = Config::load().unwrap();
     std::thread::spawn(move || git_stuff(config.read_git_remote()));
-
     run();
 }
