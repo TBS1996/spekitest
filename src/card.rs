@@ -1,10 +1,11 @@
 use serde::{Deserialize, Serialize, de, Serializer};
 use toml::Value;
 
-use std::cmp::{Ordering, Reverse};
+use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
 use std::fs::read_to_string;
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
 use std::time::Duration;
@@ -25,47 +26,71 @@ pub type RecallRate = f32;
 pub struct CardCache(HashMap<Id, Arc<SavedCard>>);
 
 impl CardCache{
-    pub fn maybe_update(&mut self, id: &Id) {
-    let card_needs_update = match self.0.get(id) {
-        Some(cached_card) => {
-            // Get the file's last_modified time
-            let metadata = std::fs::metadata(cached_card.as_path()).unwrap();
-            let last_modified_time = system_time_as_unix_time( metadata.modified().unwrap());
+    /// Checks that the card in the cache is up to date, and fixes it if it's not. 
+    /// There's three possibilities: 
+    ///     1. its up to date, no need to do anything.
+    ///     2. It's outdated, we simply deserialize the card from the same path, so that its updated.
+    ///     3. card isn't even found in the location, we search through all the cards to find it. Panicking if it's not found.
+    fn maybe_update(&mut self, id: &Id) {
+        let card_needs_update = match self.0.get(id) {
+            Some(cached_card) => {
+                let path = cached_card.as_path();
+                if path.exists(){
+                    // Get the file's last_modified time
+                    let metadata = std::fs::metadata(path.as_path()).unwrap();
+                    let last_modified_time = system_time_as_unix_time( metadata.modified().unwrap());
 
-            // Check if the file has been modified since we cached it
-            Some(last_modified_time > cached_card.last_modified)
-        },
-        None => None, // If card isn't in the cache, then we definitely need to update
-    };
+                    // Check if the file has been modified since we cached it
+                    Some(last_modified_time > cached_card.last_modified)
+                } else {
+                    None
+                }
 
-    match card_needs_update {
-        Some(true) => {
-            let path = self.0.get(id).unwrap().as_path();
-            let updated_card = SavedCard::from_path(path.as_path());
-            self.0.insert(*id, updated_card.into());
+            },
+            None => None, // If card isn't in the cache, then we definitely need to update
+        };
 
+        match card_needs_update {
+            Some(true) => {
+                let path = self.0.get(id).unwrap().as_path();
+                let updated_card = SavedCard::from_path(path.as_path());
+                self.0.insert(*id, updated_card.into());
+            }
+            // if you find the card, and it's up to date, then no need to do anything.
+            Some(false) => {},
+            None => {
+                // Read the card from the disk
+                // expensive! it'll comb through all the cards linearly.
+                let card = SavedCard::from_id(id).unwrap();
+                self.0.insert(*id, card.into());
+            }
+        };
     }
-    // if you find the card, and it's up to date, then no need to do anything.
-    Some(false) => {},
-    None => {
-        
-        // Read the card from the disk
-        // expensive! it'll comb through all the cards linearly.
-        let card = SavedCard::from_id(id).unwrap();
-        self.0.insert(*id, card.into());
-    }
-    };
-}
+
     
+    /// gets all the Ids (keys) sorted by recent modified
+    pub fn all_ids(&self) -> Vec<Id> {
+        let mut pairs: Vec<_> = self.0.iter().collect();
+        pairs.sort_by_key(|&(_, v)| {
+            if v.is_outdated() {
+                get_last_modified(v.as_path())
+            } else {
+                v.last_modified().to_owned()
+            }
+        });
+        pairs.reverse();
+        pairs.into_iter().map(|(k, _)| k.to_owned()).collect()
+    }
+
     pub fn exists(&self, id: &Id) -> bool {
         self.0.get(id).is_some()
     }
     
-    pub fn insert(&mut self, id: &Id, card: SavedCard) {
+    pub fn insert(&mut self, card: SavedCard) {
+        let id = card.id();
         self.0.insert(*id, card.into());
     }
     
-    #[allow(dead_code)]
     pub fn remove(&mut self, id: &Id) {
         self.0.remove(id);
     }
@@ -123,7 +148,6 @@ pub fn recursive_dependents(&mut self, id: &Id) -> BTreeSet<Id> {
 }
 
     pub fn get_owned(&mut self, id: &Id) -> SavedCard {
-        self.maybe_update(id);
         (*self.get_ref(id)).clone()
     }
 
@@ -143,7 +167,7 @@ pub fn recursive_dependents(&mut self, id: &Id) -> BTreeSet<Id> {
     }
 
     fn cache_all(&mut self) {
-        let all_cards = SavedCard::load_all();
+        let all_cards = SavedCard::load_all_cards();
         for card in all_cards{
             self.cache_one(card);
         }
@@ -158,8 +182,8 @@ pub fn recursive_dependents(&mut self, id: &Id) -> BTreeSet<Id> {
 
 #[derive(Ord, PartialOrd, Eq, PartialEq, Hash, Clone, Debug)]
 pub struct CardLocation {
-    pub file_name: OsString,
-    pub category: Category,
+    file_name: OsString,
+    category: Category,
 }
 
 impl CardLocation {
@@ -243,6 +267,8 @@ impl CardInfo{
 
 
 impl SavedCard {
+    
+    
     pub fn set_priority(&mut self, priority: Priority) {
         self.card.meta.priority = priority;
         self.persist();
@@ -262,7 +288,7 @@ impl SavedCard {
     }
     
     
-    pub fn reviews(&self) -> &Vec<Review> {
+    pub fn reviews(& self) -> &Vec<Review> {
         &self.card.history.0
     }
     
@@ -282,6 +308,10 @@ impl SavedCard {
         unfinished += cache.get_ref(&dependent).is_finished() as usize;
        }
        unfinished
+    }
+    
+    pub fn last_modified(&self) -> &Duration {
+        &self.last_modified
     }
     
     pub fn category(&self) -> &Category {
@@ -320,26 +350,11 @@ impl SavedCard {
     pub fn time_since_last_review(&self) -> Option<Duration> {
         self.card.time_passed_since_last_review()
     }
-    
-    pub fn set_suspended(&mut self, suspended: IsSuspended) {
-        self.card.meta.suspended = suspended;
-        self.persist();
-    }
-    
-    pub fn set_finished(&mut self, finished: bool) {
-        self.card.meta.finished = finished;
-        self.persist();
-    }
-    
+
     pub fn back_text(&self) -> &str {
         &self.card.back.text
     }
 
-    pub fn insert_tag(&mut self, tag: String)  {
-        self.card.meta.tags.insert(tag);
-        self.persist();
-    }
-    
     pub fn contains_tag(&self, tag: &str) -> bool {
         self.card.meta.tags.contains(tag)
     }
@@ -355,15 +370,156 @@ impl SavedCard {
     pub fn dependency_ids(&self) -> &BTreeSet<Id> {
         &self.card.meta.dependencies
     }
+    
+    pub fn set_suspended(&mut self, suspended: IsSuspended) {
+        self.card.meta.suspended = suspended;
+        self.persist();
+    }
+    
+    pub fn set_finished(&mut self, finished: bool) {
+        self.card.meta.finished = finished;
+        self.persist();
+    }
+    
 
-    pub fn set_dependent(&mut self, id: &Id, cache: &mut CardCache) {
+    pub fn insert_tag(&mut self, tag: String)  {
+        self.card.meta.tags.insert(tag);
+        self.persist();
+    }
+    
+
+
+pub fn check_cycle(&self, cache: &mut CardCache, id: &Id, is_dependent: bool) -> Option<Vec<Id>> {
+    let mut visited = HashSet::new();
+    let mut path = Vec::new();
+    self.has_cycle_helper(cache, id, is_dependent, &mut visited, &mut path)
+}
+
+fn has_cycle_helper(&self, cache: &mut CardCache, id: &Id, is_dependent: bool, visited: &mut HashSet<Id>, path: &mut Vec<Id>) -> Option<Vec<Id>> {
+    
+    if path.contains(id) {
+        return Some(path.clone());
+    }
+
+    path.push(id.clone());
+
+    let dependencies = if is_dependent {
+        cache.dependencies(id)
+    } else {
+        cache.dependents(id)
+    };
+
+    for dependency in dependencies {
+        if !visited.contains(&dependency) {
+            if let Some(cycle) = self.has_cycle_helper(cache, &dependency, is_dependent, visited, path) {
+                return Some(cycle);
+            }
+        }
+    }
+
+    visited.insert(id.clone());
+    path.pop();
+
+    None
+}
+
+pub fn set_dependency(&mut self, id: &Id, cache: &mut CardCache) -> Option<String>{
+    self.card.meta.dependencies.insert(*id);
+    self.persist();
+
+    let mut other_card = cache.get_owned(id);
+    other_card.card.meta.dependents.insert(self.card.meta.id);
+    other_card.persist();
+    if let Some(mut path) =  self.check_cycle(cache, id, false) {
+        path.reverse();
+        
+        while path[0] != *self.id() {
+            path.rotate_right(1);
+        }
+        path.push(*self.id());
+        let veclen = path.len();
+        
+        let  textvec = path.into_iter().map(|id| cache.get_ref(&id).front_text().to_string()).collect::<Vec<_>>();
+        
+        
+        let mut s = String::new();
+        
+
+        for i in 0..veclen {
+            s.push_str(&format!("'{}'", &textvec[i]));
+
+            if i == 0 {
+                s.push_str(" depends on ")
+            } else if i < (veclen - 2) {
+                s.push_str(" which depends on ")
+            } else if i != (veclen - 1){
+                s.push_str(" which creates a cycle, as it depends on ")
+            }
+        }
+        
+
+
+        self.card.meta.dependencies.remove(id);
+        self.persist();
+        
+        other_card.card.meta.dependents.remove(self.id());
+        other_card.persist();
+        return Some(s);
+    }
+    None
+}
+
+    
+
+    pub fn set_dependent(&mut self, id: &Id, cache: &mut CardCache)  -> Option<String>{
         self.card.meta.dependents.insert(*id);
-        *self = self.persist();
+        self.persist();
         
         let mut other_card = cache.get_owned(id);
         other_card.card.meta.dependencies.insert(self.card.meta.id);
         other_card.persist();
+
+
+    if let Some(mut path) =  self.check_cycle(cache, id, true) {
+        
+        while path[0] != *self.id() {
+            path.rotate_right(1);
+        }
+        path.push(*self.id());
+        let veclen = path.len();
+        
+        let  textvec = path.into_iter().map(|id| cache.get_ref(&id).front_text().to_string()).collect::<Vec<_>>();
+        
+        
+        let mut s = String::new();
+        
+
+        for i in 0..veclen {
+            s.push_str(&format!("'{}'", &textvec[i]));
+
+            if i == 0 {
+                s.push_str(" depends on ")
+            } else if i < (veclen - 2) {
+                s.push_str(" which depends on ")
+            } else if i != (veclen - 1){
+                s.push_str(" which creates a cycle, as it depends on ")
+            }
+        }
+        
+
+
+        self.card.meta.dependents.remove(id);
+        self.persist();
+        
+        other_card.card.meta.dependencies.remove(self.id());
+        other_card.persist();
+        
+        return Some(s);
     }
+    None
+    }
+
+
     
     /// a = span means foo
     /// b = change span desc by..
@@ -379,14 +535,6 @@ impl SavedCard {
         
     }
 
-    pub fn set_dependency(&mut self, id: &Id, cache: &mut CardCache) {
-        self.card.meta.dependencies.insert(*id);
-        *self = self.persist();
-        
-        let mut other_card = cache.get_owned(id);
-        other_card.card.meta.dependents.insert(self.card.meta.id);
-        other_card.persist();
-    }
     
     pub fn remove_dependency(&mut self, id: &Id, _cache: &mut CardCache) {
         self.card.meta.dependencies.remove(id);
@@ -419,36 +567,39 @@ impl SavedCard {
     }
     
 
-    pub fn pending_filter(&self, cache: &mut CardCache) -> bool {
-        self.card.history.is_empty()
-            && !self.is_suspended()
-            && self.is_finished()
-            && self.is_confidently_resolved(cache)
+    pub fn pending_filter(card: &Id, cache: &mut CardCache) -> bool {
+        let card = cache.get_ref(card);
+        card.card.history.is_empty()
+            && !card.is_suspended()
+            && card.is_finished()
+            && card.is_confidently_resolved(cache)
     }
 
-    pub fn unfinished_filter(&self, cache: &mut CardCache) -> bool {
-        !self.is_finished() && !self.is_suspended() && self.is_resolved(cache)
+    pub fn unfinished_filter(card: &Id, cache: &mut CardCache) -> bool {
+        let card = cache.get_ref(card);
+        !card.is_finished() && !card.is_suspended() && card.is_resolved(cache)
     }
 
 
 
 
 
-    pub fn review_filter(&self, cache: &mut CardCache) -> bool {
-        match (self.stability(), self.card.history.time_since_last_review()) {
+    pub fn review_filter(card: &Id, cache: &mut CardCache) -> bool {
+        let card = cache.get_ref(card);
+        match (card.stability(), card.card.history.time_since_last_review()) {
             (Some(stability), Some(last_review_time)) => {
-                self.is_finished()
-                    && !self.is_suspended()
+                card.is_finished()
+                    && !card.is_suspended()
                     && last_review_time > Duration::from_secs(60) // Lets not review if its less than a minute since last time
                     && stability < last_review_time
-                    && self.is_confidently_resolved(cache)
+                    && card.is_confidently_resolved(cache)
             }
             (_, _) => false,
         }
     }
 
     /// Checks if corresponding file has been modified after this type got deserialized from the file.
-    pub fn _is_outdated(&self) -> bool {
+    pub fn is_outdated(&self) -> bool {
         let file_last_modified = {
             let path = self.as_path();
             let system_time = std::fs::metadata(path).unwrap().modified().unwrap();
@@ -519,21 +670,23 @@ impl SavedCard {
         let self_id = self.card.meta.id;
         
         for dependency in self.card.meta.dependencies {
-            let Some(mut dependency) = SavedCard::from_id(&dependency) else {continue};
+            let mut dependency = cache.get_owned(&dependency);
             dependency.card.meta.dependents.remove(&self_id);
             dependency.persist();
         }
         
         
         for dependent in self.card.meta.dependents {
-            let Some(mut dependent) = SavedCard::from_id(&dependent) else {continue};
+            let mut dependent = cache.get_owned(&dependent);
             dependent.card.meta.dependencies.remove(&self_id);
             dependent.persist();
         }
-        cache.refresh();
+        cache.remove(&self_id);
     }
 
-    pub fn get_cards_from_category_recursively(category: &Category) -> HashSet<Self> {
+    
+    
+    pub fn get_cards_from_category_recursively(category: &Category) -> HashSet<SavedCard> {
         let mut cards = HashSet::new();
         let cats = category.get_following_categories();
         for cat in cats {
@@ -542,36 +695,30 @@ impl SavedCard {
         cards
     }
         
-    pub fn search_in_cards<'a>(input: &'a str, cards: &'a HashSet<SavedCard>) -> Vec<&'a SavedCard> {
+    pub fn search_in_cards<'a>(input: &'a str, cards: &'a HashSet<SavedCard>, excluded_cards: &'a HashSet<Id>) -> Vec<&'a SavedCard> {
         cards
         .iter()
         .filter(|card| {
-            card.card.front.text.to_ascii_lowercase().contains(&input.to_ascii_lowercase())
-                || card.card.back.text.to_ascii_lowercase().contains(&input.to_ascii_lowercase())
+            (card.card.front.text.to_ascii_lowercase().contains(&input.to_ascii_lowercase())
+                || card.card.back.text.to_ascii_lowercase().contains(&input.to_ascii_lowercase()))
+                && !excluded_cards.contains(card.id())
         })
         .collect()
 }
 
-
-
-
-    
-
-    
-
+    // expensive function!
     pub fn from_id(id: &Id) -> Option<Self> {
-        Self::load_all()
+        Self::load_all_cards()
             .into_iter()
             .find(|card| &card.card.meta.id == id)
     }
-    pub fn load_all() -> HashSet<Self> {
+    
+    pub fn load_all_cards() -> HashSet<SavedCard> {
         Self::get_cards_from_category_recursively(&Category::root())
     }
 
 
-    pub fn sort_by_last_modified(vec: &mut [Self]) {
-        vec.sort_by_key(|k| Reverse(k.last_modified));
-    }
+
 
 
     pub fn edit_with_vim(&self) -> Self {
@@ -603,7 +750,17 @@ impl SavedCard {
         &self.card
     }
 
-    fn persist(&self) -> Self {
+    // Call this function every time SavedCard is mutated. 
+     fn persist(&mut self){
+
+        if self.is_outdated() {
+            // When you persist, the last_modified in the card should match the ones from the file.
+            // This shouldn't be possible, as this function mutates itself to get a fresh copy, so 
+            // i'll panic here to alert me of the logic bug.
+            let x = format!("{:?}", self);
+           // panic!("{}", x);
+        }
+
         let path = self.as_path();
         if !path.exists() {
             let msg = format!("following path doesn't really exist: {}", path.display());
@@ -613,16 +770,18 @@ impl SavedCard {
         let toml = toml::to_string(self.card_as_ref()).unwrap();
 
         std::fs::write(&path, toml).unwrap();
-        SavedCard::from_path(path.as_path())
+        *self = SavedCard::from_path(path.as_path())
     }
 
 
-    pub fn new_review(&mut self, grade: Grade) -> Self {
+    pub fn new_review(&mut self, grade: Grade) {
         let review = Review::new(grade);
         self.card.history.add_review(review);
-        self.persist()
+        self.persist();
     }
 }
+
+
 
 
 
@@ -645,6 +804,19 @@ impl Card {
             meta,
             history: Reviews::default(),
         }
+    }
+    
+    
+    pub fn import_cards(filename: &Path) -> Option<Vec<Self>> {
+        let mut lines = std::io::BufReader::new(std::fs::File::open(filename).ok()?).lines();
+        let mut cards = vec![];
+
+        while let Some(Ok(question)) = lines.next() {
+            if let Some(Ok(answer)) = lines.next() {
+                cards.push(Self::new_simple(question, answer));
+            }
+        }
+        cards.into()
     }
 
     pub fn new_simple(front: String, back: String) -> Self {
@@ -675,21 +847,31 @@ impl Card {
         let max_char_len = 40;
         let front_text = self.front.text.chars().filter(|c|c.is_ascii_alphanumeric() || c.is_ascii_whitespace() ).collect::<String>().replace(' ', "_");
        let mut file_name = PathBuf::from(truncate_string(front_text, max_char_len));
+
         if file_name.exists() {
             file_name = PathBuf::from(self.meta.id.to_string());
         }
 
-        let path = category.as_path().join(file_name).with_extension("toml");
+        let mut path = category.as_path().join(file_name).with_extension("toml");
+        
+        if path.exists() {
+            file_name = PathBuf::from(self.meta.id.to_string());
+            path = category.as_path().join(file_name).with_extension("toml");
+        }
 
         std::fs::write(&path, toml).unwrap();
 
         let full_card = SavedCard::from_path(path.as_path());
-        cache.refresh();
+        cache.insert(full_card.clone());
         full_card
     }
 
 
     fn time_passed_since_last_review(&self) -> Option<Duration> {
+        if current_time() < self.history.0.last()?.timestamp{
+            return Duration::default().into();
+        }
+
         Some(current_time() - self.history.0.last()?.timestamp)
     }
 }
@@ -736,7 +918,7 @@ impl std::str::FromStr for Grade {
 }
 
 use crate::common::{
-    open_file_with_vim, serde_duration_as_secs, system_time_as_unix_time, truncate_string,
+    open_file_with_vim, serde_duration_as_secs, system_time_as_unix_time, truncate_string, get_last_modified,
 };
 
 
@@ -748,7 +930,7 @@ impl Reviews{
     pub fn strength(&self) -> Option<Duration> {
         let days_passed = self.time_since_last_review()?;
         let stability = self.stability()?;
-        let strength = calculate_left_memory(days_passed, stability);
+        let strength = calculate_memory_strength(0.9, days_passed, stability);
         //dbg!(days_passed.as_secs_f32() / 86400., stability.as_secs_f32() / 86400., strength);
           Duration::from_secs_f32(strength * 86400.).into()
        
@@ -759,7 +941,7 @@ impl Reviews{
         let mut myself = self.clone();
         let new_review = Review::new(grade);
         myself.add_review(new_review);
-        myself.strength().unwrap()
+        myself.strength().unwrap_or_default()
     }
 
     
@@ -778,10 +960,6 @@ impl Reviews{
         
         let expected_strength = expected_win + expected_loss;
         
-        //dbg!(recall_rate, current_strength, expected_loss, expected_win, failstrength, winstrength);
-        
-
-      //  Some((expected_strength - current_strength) / 1.)
         (expected_strength / current_strength).into()
     }
 
@@ -800,7 +978,7 @@ pub fn new_stability(grade: &Grade, time_passed: Option<Duration>, current_stabi
     let time_passed = time_passed.unwrap_or(Duration::from_secs(86400));
 
     if grade_factor < 1.0 { // the grade is wrong
-        time_passed.mul_f32(grade_factor).min(current_stability)
+        time_passed.min(current_stability).mul_f32(grade_factor)
     } else { // the grade is correct
         let alternative_stability = time_passed.mul_f32(grade_factor);
         if alternative_stability > current_stability {
@@ -822,6 +1000,9 @@ pub fn stability(&self) -> Option<Duration> {
     let mut prev_timestamp = reviews[0].timestamp;
 
     for review in &reviews[1..] {
+        if prev_timestamp > review.timestamp {
+            return None;
+        }
         let time_passed = review.timestamp - prev_timestamp; // Calculate the time passed since the previous review
         stability = Self::new_stability(&review.grade, Some(time_passed), stability);
         prev_timestamp = review.timestamp; // Update the timestamp for the next iteration
@@ -896,7 +1077,7 @@ impl Review {
     fn time_passed(&self) -> Duration {
         let unix = self.timestamp;
         let current_unix = current_time();
-        current_unix.checked_sub(unix).unwrap()
+        current_unix.checked_sub(unix).unwrap_or_default()
     }
 }
 
@@ -1092,10 +1273,10 @@ impl Default for Meta {
 }
 
 
-pub fn calculate_left_memory(time_passed: Duration, stability: Duration) -> f32 {
+pub fn calculate_memory_strength(base: f64, time_passed: Duration, stability: Duration) -> f32 {
     let t = time_passed.as_secs_f64() / 86400.;
-    let ln0_9 = 0.9_f64.ln();
-    let value = -1.0 / ln0_9 + (1.0 - f64::exp(t * ln0_9)) / ln0_9;
+    let base = base.ln();
+    let value = -1.0 / base + (1.0 - f64::exp(t * base)) / base;
     value as f32 * stability.as_secs_f32() / 86400.
 }
 
@@ -1191,7 +1372,7 @@ mod tests {
     fn debug_strength(){
         let stability = Duration::from_secs_f32(100. * 86400.);
         let time_passed = Duration::from_secs_f32(0. * 86400.);
-        let x = calculate_left_memory(time_passed, stability);
+        let x = calculate_memory_strength(0.9, time_passed, stability);
         dbg!(x);
         
     }

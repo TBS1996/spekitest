@@ -1,8 +1,9 @@
 use crate::card::{CardCache, CardLocation, SavedCard};
 use crate::common::get_last_modified;
 use crate::paths::{self, get_cards_path};
+use crate::Id;
 use std::collections::{BTreeSet, HashSet};
-use std::fs::{self, File};
+use std::fs::{self, create_dir_all, File};
 use std::io::{self, BufRead};
 use std::path::Path;
 use std::path::PathBuf;
@@ -10,7 +11,7 @@ use std::path::PathBuf;
 // Represent the category that a card is in, can be nested
 #[derive(Ord, PartialOrd, Eq, Hash, Debug, Clone, Default, PartialEq)]
 pub struct Category(pub Vec<String>);
-pub type CardFilter = Box<dyn FnMut(&SavedCard, &mut CardCache) -> bool>;
+pub type CardFilter = Box<dyn FnMut(&Id, &mut CardCache) -> bool>;
 
 fn read_lines<P>(filename: P) -> io::Result<Vec<String>>
 where
@@ -98,6 +99,26 @@ impl Category {
         cards
     }
 
+    pub fn get_containing_card_ids(&self) -> HashSet<Id> {
+        let directory = self.as_path();
+        let mut cards = HashSet::new();
+
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("toml") {
+                let card = SavedCard::from_path(path.as_path()).into_card();
+                let location = CardLocation::new(&path);
+                let last_modified = get_last_modified(path);
+
+                let full_card = SavedCard::new(card, location, last_modified);
+                cards.insert(full_card.id().to_owned());
+            }
+        }
+        cards
+    }
+
     pub fn sort_categories(categories: &mut [Category]) {
         categories.sort_by(|a, b| {
             let a_str = a.0.join("/");
@@ -133,7 +154,10 @@ impl Category {
     }
 
     pub fn import_category() -> Self {
-        Self(vec!["imports".into()])
+        let cat = Self(vec!["imports".into()]);
+        std::fs::create_dir_all(cat.as_path()).unwrap();
+        dbg!(cat.as_path());
+        cat
     }
 
     pub fn load_all() -> io::Result<Vec<Category>> {
@@ -181,33 +205,25 @@ impl Category {
     pub fn as_path(&self) -> PathBuf {
         let categories = self.0.join("/");
         let path = format!("{}/{}", get_cards_path().to_string_lossy(), categories);
-        let path = PathBuf::from(path);
-        if !path.exists() {
-            panic!();
-        }
-        path
+        PathBuf::from(path)
     }
 
-    fn get_cards_with_filter(
-        &self,
-        mut filter: CardFilter,
-        cache: &mut CardCache,
-    ) -> Vec<SavedCard> {
-        self.get_containing_cards()
+    fn get_cards_with_filter(&self, mut filter: CardFilter, cache: &mut CardCache) -> Vec<Id> {
+        self.get_containing_card_ids()
             .into_iter()
             .filter(|card| filter(card, cache))
             .collect()
     }
 
-    pub fn get_unfinished_cards(&self, cache: &mut CardCache) -> Vec<SavedCard> {
+    pub fn get_unfinished_cards(&self, cache: &mut CardCache) -> Vec<Id> {
         self.get_cards_with_filter(Box::new(SavedCard::unfinished_filter), cache)
     }
 
-    pub fn get_pending_cards(&self, cache: &mut CardCache) -> Vec<SavedCard> {
+    pub fn get_pending_cards(&self, cache: &mut CardCache) -> Vec<Id> {
         self.get_cards_with_filter(Box::new(SavedCard::pending_filter), cache)
     }
 
-    pub fn get_review_cards(&self, cache: &mut CardCache) -> Vec<SavedCard> {
+    pub fn get_review_cards(&self, cache: &mut CardCache) -> Vec<Id> {
         self.get_cards_with_filter(Box::new(SavedCard::review_filter), cache)
     }
 }

@@ -47,22 +47,6 @@ impl Config {
     pub fn read_git_remote(&self) -> &Option<String> {
         &self.git_remote
     }
-    pub fn _read_play_audio(&self) -> &Option<String> {
-        &self.git_remote
-    }
-    pub fn _read_show_images(&self) -> &Option<String> {
-        &self.git_remote
-    }
-
-    pub fn _play_audio(&mut self, val: bool) {
-        self.play_audio = val;
-        self.save().unwrap();
-    }
-
-    pub fn _show_image(&mut self, val: bool) {
-        self.show_images = val;
-        self.save().unwrap();
-    }
 
     // Save the config to a file
     pub fn save(&self) -> std::io::Result<()> {

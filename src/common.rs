@@ -1,16 +1,114 @@
+use std::collections::HashSet;
 use std::fmt::Display;
 
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, UNIX_EPOCH};
 
+use crate::card::{Card, CardCache, SavedCard};
 use crate::paths::get_cards_path;
-use std::io::{self, ErrorKind};
+use crate::Id;
+use std::io::{self, BufRead, ErrorKind};
 
 use std::time::SystemTime;
 
+pub fn duration_to_days(dur: &Duration) -> f32 {
+    dur.as_secs_f32() / 86400.
+}
+
+type Filter = (String, Box<dyn FnMut(&SavedCard) -> bool>);
+
+#[derive(Default)]
+struct Filters {
+    positive: Vec<Filter>,
+    negative: Vec<Filter>,
+}
+
+impl Filters {
+    fn run<'a>(&mut self, cards: HashSet<&'a Id>, cache: &mut CardCache) -> HashSet<&'a Id> {
+        let mut accepted_cards = HashSet::new();
+        for card_id in cards {
+            let card = cache.get_ref(card_id);
+            if self.positive.iter_mut().all(|filter| filter.1(&card))
+                && !self.negative.iter_mut().any(|filter| filter.1(&card))
+            {
+                accepted_cards.insert(card_id);
+            }
+        }
+        accepted_cards
+    }
+
+    fn insert_positive(&mut self, filter: Filter) {
+        self.positive.push(filter);
+    }
+    fn insert_negative(&mut self, filter: Filter) {
+        self.negative.push(filter);
+    }
+
+    fn is_pending(&self) -> Filter {
+        let closure = move |card: &SavedCard| -> bool { card.is_pending() };
+
+        ("is pending".to_string(), Box::new(closure))
+    }
+
+    fn is_finished(&self) -> Filter {
+        let closure = move |card: &SavedCard| -> bool { card.is_finished() };
+
+        ("is finished".to_string(), Box::new(closure))
+    }
+
+    fn is_suspended(&self) -> Filter {
+        let closure = move |card: &SavedCard| -> bool { card.is_suspended() };
+
+        ("is suspended".to_string(), Box::new(closure))
+    }
+
+    fn has_tag(&self, tag: String) -> Filter {
+        let s = format!("includes tag:  {}", &tag);
+        let closure = move |card: &SavedCard| -> bool { card.contains_tag(&tag) };
+        (s, Box::new(closure))
+    }
+
+    fn max_strength(&self, max_strength: Duration) -> Filter {
+        let closure = move |card: &SavedCard| -> bool {
+            if let Some(strength_rate) = card.strength() {
+                strength_rate > max_strength
+            } else {
+                false
+            }
+        };
+        let s = format!("strength < {}", duration_to_days(&max_strength));
+        (s, Box::new(closure))
+    }
+
+    fn max_stability(&self, max_stability: Duration) -> Filter {
+        let closure = move |card: &SavedCard| -> bool {
+            if let Some(stability_rate) = card.stability() {
+                stability_rate > max_stability
+            } else {
+                false
+            }
+        };
+        let s = format!("stability < {}", duration_to_days(&max_stability));
+        (s, Box::new(closure))
+    }
+
+    fn max_recall(&self, max_recall: f32) -> Filter {
+        let closure = move |card: &SavedCard| -> bool {
+            if let Some(recall_rate) = card.recall_rate() {
+                recall_rate > max_recall
+            } else {
+                false
+            }
+        };
+        let s = format!("recall < {max_recall}");
+        (s, Box::new(closure))
+    }
+}
+
 pub fn current_time() -> Duration {
-    system_time_as_unix_time(SystemTime::now()) + Duration::from_secs(86400)
+    system_time_as_unix_time(SystemTime::now()) // + Duration::from_secs(86400)
 }
 
 pub fn system_time_as_unix_time(time: SystemTime) -> Duration {
@@ -109,6 +207,16 @@ fn open_folder_in_explorer(path: &Path) -> std::io::Result<()> {
     }
 
     Ok(())
+}
+
+/// will generate a number between 0 and 100 and check that it's below the given percentage.
+/// so if you input '10', then ofc, 10% of the times it will return true as the number will be below 10
+pub fn within_percentage(percentage: u32) -> bool {
+    rand_int(100) < percentage
+}
+
+pub fn rand_int(max: u32) -> u32 {
+    current_time().as_millis() as u32 % max
 }
 
 pub fn get_last_modified(path: PathBuf) -> Duration {
